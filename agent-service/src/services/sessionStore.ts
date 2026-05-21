@@ -1,0 +1,678 @@
+import Database from 'better-sqlite3'
+import path from 'path'
+import os from 'os'
+import fs from 'fs'
+import type { Session, CompactionConfig, CompactionResult } from '../types'
+
+const DB_PATH = process.env.AGENT_DB_PATH || path.join(process.cwd(), 'data', 'agent-sessions.db')
+
+const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
+  preserveRecentMessages: parseInt(process.env.COMPACTION_PRESERVE_RECENT || '4', 10),
+  maxEstimatedTokens: parseInt(process.env.COMPACTION_MAX_ESTIMATED_TOKENS || '10000', 10),
+  triggerTokenThreshold: parseInt(process.env.COMPACTION_TRIGGER_TOKENS || '100000', 10),
+  maxSummaryChars: 1200,
+  maxSummaryLines: 24,
+  maxLineChars: 160,
+}
+
+const SESSION_TTL_HOURS = parseInt(process.env.SESSION_TTL_HOURS || '24', 10)
+const MAX_SESSIONS = parseInt(process.env.MAX_SESSIONS || '1000', 10)
+const CLEANUP_INTERVAL_MINUTES = parseInt(process.env.CLEANUP_INTERVAL_MINUTES || '5', 10)
+
+type SummarizeFn = (messages: Session['messages'], previousSummary?: string) => Promise<string>
+
+export class SessionStore {
+  private db: Database.Database
+  private config: CompactionConfig
+  private cleanupJob: any = null
+  private sessionsRef: Map<string, Session> | null = null
+
+  constructor(dbPath?: string, config?: Partial<CompactionConfig>) {
+    const resolvedPath = dbPath || DB_PATH
+    const dir = path.dirname(resolvedPath)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+
+    this.db = new Database(resolvedPath)
+    this.db.pragma('journal_mode = WAL')
+    this.db.pragma('foreign_keys = ON')
+    this.config = { ...DEFAULT_COMPACTION_CONFIG, ...config }
+    this.initSchema()
+  }
+
+  setSessionsRef(ref: Map<string, Session>): void {
+    this.sessionsRef = ref
+  }
+
+  private initSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        skill_id TEXT NOT NULL,
+        work_dir TEXT DEFAULT '',
+        cumulative_input_tokens INTEGER DEFAULT 0,
+        compaction_count INTEGER DEFAULT 0,
+        last_compacted_at TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_sessions_session ON agent_sessions(session_id);
+
+      CREATE TABLE IF NOT EXISTS agent_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_key TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('user','assistant','system','tool','compaction')),
+        content TEXT DEFAULT '',
+        tool_call_id TEXT DEFAULT '',
+        tool_calls_json TEXT DEFAULT '',
+        seq INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_key, seq);
+
+      CREATE TABLE IF NOT EXISTS agent_compactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_key TEXT NOT NULL,
+        removed_message_count INTEGER NOT NULL,
+        summary_text TEXT NOT NULL,
+        input_tokens_before INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_compactions_session ON agent_compactions(session_key);
+    `)
+  }
+
+  // ── Session CRUD ──
+
+  createSession(key: string, sessionId: string, skillId: string, systemPrompt: string): Session {
+    const workDir = path.join(os.tmpdir(), 'agent-session', sessionId)
+    if (!fs.existsSync(workDir)) {
+      fs.mkdirSync(workDir, { recursive: true })
+    }
+
+    const now = Date.now()
+    const session: Session = {
+      id: sessionId,
+      skillId,
+      messages: [{ role: 'system', content: systemPrompt }],
+      createdAt: now,
+      updatedAt: now,
+      workDir,
+      cumulativeInputTokens: 0,
+      compactionCount: 0,
+    }
+
+    this.db.prepare(`
+      INSERT OR IGNORE INTO agent_sessions (id, session_id, skill_id, work_dir, cumulative_input_tokens, compaction_count)
+      VALUES (?, ?, ?, ?, 0, 0)
+    `).run(key, sessionId, skillId, workDir)
+
+    this.syncMessagesToDb(key, session.messages)
+
+    return session
+  }
+
+  getSession(key: string): Session | null {
+    const row = this.db.prepare('SELECT * FROM agent_sessions WHERE id = ?').get(key) as any
+    if (!row) return null
+
+    const messages = this.loadMessages(key)
+    return {
+      id: row.session_id,
+      skillId: row.skill_id,
+      messages,
+      createdAt: new Date(row.created_at).getTime(),
+      updatedAt: new Date(row.updated_at).getTime(),
+      workDir: row.work_dir || '',
+      cumulativeInputTokens: row.cumulative_input_tokens || 0,
+      compactionCount: row.compaction_count || 0,
+    }
+  }
+
+  updateSessionTimestamp(key: string): void {
+    this.db.prepare(`UPDATE agent_sessions SET updated_at = datetime('now','localtime') WHERE id = ?`).run(key)
+  }
+
+  deleteSession(key: string): void {
+    this.db.prepare('DELETE FROM agent_messages WHERE session_key = ?').run(key)
+    this.db.prepare('DELETE FROM agent_compactions WHERE session_key = ?').run(key)
+    this.db.prepare('DELETE FROM agent_sessions WHERE id = ?').run(key)
+  }
+
+  // ── Message operations ──
+
+  appendMessage(key: string, message: Session['messages'][0]): void {
+    const maxSeq = this.db.prepare(
+      'SELECT COALESCE(MAX(seq), -1) as max_seq FROM agent_messages WHERE session_key = ?'
+    ).get(key) as any
+
+    const seq = (maxSeq?.max_seq ?? -1) + 1
+    const role = message.role
+    const content = this.truncateField(message.content)
+    const toolCallId = message.toolCallId || ''
+    const toolCallsJson = message.toolCalls ? JSON.stringify(message.toolCalls) : ''
+
+    this.db.prepare(`
+      INSERT INTO agent_messages (session_key, role, content, tool_call_id, tool_calls_json, seq)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(key, role, content, toolCallId, toolCallsJson, seq)
+
+    this.updateSessionTimestamp(key)
+  }
+
+  loadMessages(key: string): Session['messages'] {
+    const rows = this.db.prepare(
+      'SELECT role, content, tool_call_id, tool_calls_json FROM agent_messages WHERE session_key = ? ORDER BY seq ASC'
+    ).all(key) as any[]
+
+    return rows.map(row => {
+      const msg: Session['messages'][0] = {
+        role: row.role as Session['messages'][0]['role'],
+        content: row.content,
+      }
+      if (row.tool_call_id) {
+        msg.toolCallId = row.tool_call_id
+      }
+      if (row.tool_calls_json) {
+        try {
+          msg.toolCalls = JSON.parse(row.tool_calls_json)
+        } catch { /* ignore */ }
+      }
+      return msg
+    })
+  }
+
+  getMessageCount(key: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) as c FROM agent_messages WHERE session_key = ?').get(key) as any
+    return row?.c || 0
+  }
+
+  // ── Token tracking ──
+
+  addInputTokens(key: string, tokens: number): void {
+    this.db.prepare(
+      'UPDATE agent_sessions SET cumulative_input_tokens = cumulative_input_tokens + ?, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?'
+    ).run(tokens, key)
+  }
+
+  getCumulativeInputTokens(key: string): number {
+    const row = this.db.prepare('SELECT cumulative_input_tokens FROM agent_sessions WHERE id = ?').get(key) as any
+    return row?.cumulative_input_tokens || 0
+  }
+
+  // ── Compaction ──
+
+  shouldCompact(key: string): boolean {
+    const tokens = this.getCumulativeInputTokens(key)
+    return tokens >= this.config.triggerTokenThreshold
+  }
+
+  async compactSession(key: string, summarizeFn?: SummarizeFn): Promise<CompactionResult> {
+    const messages = this.loadMessages(key)
+    const config = this.config
+
+    // Find existing compaction summary
+    const compactionIdx = messages.findIndex(m => m.role === 'system' && m.content.startsWith(COMPACT_PREAMBLE))
+    const compactedPrefixLen = compactionIdx >= 0 ? 1 : 0
+
+    // Determine compactable region
+    const rawKeepFrom = Math.max(compactedPrefixLen, messages.length - config.preserveRecentMessages)
+
+    // Boundary protection: don't split tool_use/tool_result pairs
+    let keepFrom = rawKeepFrom
+    while (keepFrom > compactedPrefixLen) {
+      const firstPreserved = messages[keepFrom]
+      if (firstPreserved.role === 'tool') {
+        const preceding = messages[keepFrom - 1]
+        const precedingHasToolCalls = preceding.toolCalls && preceding.toolCalls.length > 0
+        if (precedingHasToolCalls) {
+          keepFrom--
+          break
+        }
+        keepFrom--
+      } else {
+        break
+      }
+    }
+
+    const compactableMessages = messages.slice(compactedPrefixLen, keepFrom)
+    if (compactableMessages.length <= config.preserveRecentMessages) {
+      return { removedCount: 0, summaryLength: 0, newMessageCount: messages.length }
+    }
+
+    const existingSummary = compactionIdx >= 0
+      ? messages[compactionIdx].content.replace(COMPACT_PREAMBLE, '').trim()
+      : undefined
+
+    // Generate summary
+    let summary: string
+    if (summarizeFn) {
+      try {
+        summary = await summarizeFn(compactableMessages, existingSummary)
+      } catch (err) {
+        console.error('[SessionStore] LLM summarization failed, using heuristic fallback:', err)
+        summary = this.heuristicSummarize(compactableMessages, existingSummary)
+      }
+    } else {
+      summary = this.heuristicSummarize(compactableMessages, existingSummary)
+    }
+
+    // Compress summary if too long
+    summary = this.compressSummary(summary)
+
+    const formattedSummary = `${COMPACT_PREAMBLE}${summary}\n\n${COMPACT_RECENT_NOTE}`
+
+    const preserved = messages.slice(keepFrom)
+    const newMessages: Session['messages'] = [
+      { role: 'system', content: formattedSummary },
+      ...preserved,
+    ]
+
+    // Write to DB in a transaction
+    const sessionRow = this.db.prepare('SELECT cumulative_input_tokens, compaction_count FROM agent_sessions WHERE id = ?').get(key) as any
+    const inputTokensBefore = sessionRow?.cumulative_input_tokens || 0
+    const compactionCount = (sessionRow?.compaction_count || 0) + 1
+
+    const doCompact = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM agent_messages WHERE session_key = ?').run(key)
+      this.syncMessagesToDb(key, newMessages)
+
+      this.db.prepare(`
+        UPDATE agent_sessions SET
+          cumulative_input_tokens = 0,
+          compaction_count = ?,
+          last_compacted_at = datetime('now','localtime'),
+          updated_at = datetime('now','localtime')
+        WHERE id = ?
+      `).run(compactionCount, key)
+
+      this.db.prepare(`
+        INSERT INTO agent_compactions (session_key, removed_message_count, summary_text, input_tokens_before)
+        VALUES (?, ?, ?, ?)
+      `).run(key, compactableMessages.length, summary, inputTokensBefore)
+    })
+
+    doCompact()
+
+    // Sync in-memory session if available
+    if (this.sessionsRef?.has(key)) {
+      const session = this.sessionsRef.get(key)!
+      session.messages = newMessages
+      session.cumulativeInputTokens = 0
+      session.compactionCount = compactionCount
+    }
+
+    console.log(`[SessionStore] Compacted session ${key}: removed ${compactableMessages.length} messages, summary ${summary.length} chars`)
+
+    return {
+      removedCount: compactableMessages.length,
+      summaryLength: summary.length,
+      newMessageCount: newMessages.length,
+    }
+  }
+
+  // ── Heuristic summarization (Claude Code compatible) ──
+
+  private heuristicSummarize(messages: Session['messages'], existingSummary?: string): string {
+    const userCount = messages.filter(m => m.role === 'user').length
+    const assistantCount = messages.filter(m => m.role === 'assistant').length
+    const toolCount = messages.filter(m => m.role === 'tool').length
+
+    // Extract tool names
+    const toolNames = new Set<string>()
+    for (const m of messages) {
+      if (m.toolCalls) {
+        for (const tc of m.toolCalls) {
+          toolNames.add(tc.function.name)
+        }
+      }
+    }
+    const sortedTools = Array.from(toolNames).sort()
+
+    const lines: string[] = [
+      'Conversation summary:',
+      `- Scope: ${messages.length} earlier messages compacted (user=${userCount}, assistant=${assistantCount}, tool=${toolCount}).`,
+    ]
+
+    if (sortedTools.length > 0) {
+      lines.push(`- Tools mentioned: ${sortedTools.join(', ')}.`)
+    }
+
+    // Recent user requests (max 3)
+    const userRequests = messages
+      .filter(m => m.role === 'user' && m.content.trim())
+      .slice(-3)
+      .map(m => this.truncateSummary(m.content, 160))
+    if (userRequests.length > 0) {
+      lines.push('- Recent user requests:')
+      for (const r of userRequests) {
+        lines.push(`  - ${r}`)
+      }
+    }
+
+    // Pending work
+    const pendingWork = this.inferPendingWork(messages)
+    if (pendingWork.length > 0) {
+      lines.push('- Pending work:')
+      for (const item of pendingWork) {
+        lines.push(`  - ${item}`)
+      }
+    }
+
+    // Key files
+    const keyFiles = this.extractKeyFiles(messages)
+    if (keyFiles.length > 0) {
+      lines.push(`- Key files referenced: ${keyFiles.join(', ')}.`)
+    }
+
+    // Current work
+    const currentWork = this.inferCurrentWork(messages)
+    if (currentWork) {
+      lines.push(`- Current work: ${currentWork}`)
+    }
+
+    // Timeline
+    lines.push('- Key timeline:')
+    for (const m of messages) {
+      const content = this.truncateSummary(m.content, 80)
+      const toolInfo = m.toolCalls?.map(tc => tc.function.name).join(', ')
+      const display = toolInfo ? `${content} [tools: ${toolInfo}]` : content
+      lines.push(`  - ${m.role}: ${display}`)
+    }
+
+    // Merge with existing summary
+    if (existingSummary) {
+      return this.mergeSummaries(existingSummary, lines.join('\n'))
+    }
+
+    return lines.join('\n')
+  }
+
+  private mergeSummaries(existingSummary: string, newSummary: string): string {
+    const previousHighlights = this.extractHighlights(existingSummary)
+    const newHighlights = this.extractHighlights(newSummary)
+    const newTimeline = this.extractTimeline(newSummary)
+
+    const lines: string[] = ['Conversation summary:']
+
+    if (previousHighlights.length > 0) {
+      lines.push('- Previously compacted context:')
+      for (const h of previousHighlights) lines.push(`  ${h}`)
+    }
+
+    if (newHighlights.length > 0) {
+      lines.push('- Newly compacted context:')
+      for (const h of newHighlights) lines.push(`  ${h}`)
+    }
+
+    if (newTimeline.length > 0) {
+      lines.push('- Key timeline:')
+      for (const t of newTimeline) lines.push(`  ${t}`)
+    }
+
+    return lines.join('\n')
+  }
+
+  private extractHighlights(summary: string): string[] {
+    const lines: string[] = []
+    let inTimeline = false
+    for (const line of summary.split('\n')) {
+      const trimmed = line.trimEnd()
+      if (!trimmed || trimmed === 'Conversation summary:' || trimmed === 'Summary:') continue
+      if (trimmed === '- Key timeline:') { inTimeline = true; continue }
+      if (inTimeline) continue
+      lines.push(trimmed)
+    }
+    return lines
+  }
+
+  private extractTimeline(summary: string): string[] {
+    const lines: string[] = []
+    let inTimeline = false
+    for (const line of summary.split('\n')) {
+      const trimmed = line.trimEnd()
+      if (trimmed === '- Key timeline:') { inTimeline = true; continue }
+      if (!inTimeline) continue
+      if (!trimmed) break
+      lines.push(trimmed)
+    }
+    return lines
+  }
+
+  private inferPendingWork(messages: Session['messages']): string[] {
+    const keywords = /todo|next|pending|follow.?up|remaining|待办|下一步|剩余/
+    return messages
+      .filter(m => m.role === 'assistant' && keywords.test(m.content.toLowerCase()))
+      .slice(-3)
+      .map(m => this.truncateSummary(m.content, 160))
+      .reverse()
+  }
+
+  private extractKeyFiles(messages: Session['messages']): string[] {
+    const interestingExts = /\.(ts|tsx|js|jsx|json|md|py|sql|yaml|yml|csv)$/i
+    const files = new Set<string>()
+    for (const m of messages) {
+      const tokens = m.content.split(/\s+/)
+      for (const token of tokens) {
+        const cleaned = token.replace(/^[,.;:)"'`]+|[,.;:)"'`]+$/g, '')
+        if (cleaned.includes('/') && interestingExts.test(cleaned)) {
+          files.add(cleaned)
+        }
+      }
+    }
+    return Array.from(files).slice(0, 8)
+  }
+
+  private inferCurrentWork(messages: Session['messages']): string | null {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'assistant' && m.content.trim()) {
+        return this.truncateSummary(m.content, 200)
+      }
+    }
+    return null
+  }
+
+  // ── Summary compression (from Claude Code summary_compression.rs) ──
+
+  private compressSummary(summary: string): string {
+    const { maxSummaryChars, maxSummaryLines, maxLineChars } = this.config
+
+    const normalized = this.normalizeLines(summary, maxLineChars)
+    if (normalized.lines.length === 0) return ''
+
+    const selected = this.selectLines(normalized.lines, maxSummaryChars, maxSummaryLines)
+    let omitted = normalized.lines.length - selected.length
+
+    if (omitted > 0) {
+      const notice = `... ${omitted} additional line(s) omitted.`
+      if (selected.length < maxSummaryLines && this.joinedCharCount([...selected, notice]) <= maxSummaryChars) {
+        selected.push(notice)
+      }
+    }
+
+    return selected.join('\n')
+  }
+
+  private normalizeLines(text: string, maxLineChars: number): { lines: string[]; removedDuplicates: number } {
+    const seen = new Set<string>()
+    const lines: string[] = []
+    let removedDuplicates = 0
+
+    for (const rawLine of text.split('\n')) {
+      const collapsed = rawLine.split(/\s+/).join(' ').trim()
+      if (!collapsed) continue
+      const truncated = collapsed.length > maxLineChars
+        ? collapsed.slice(0, maxLineChars - 1) + '…'
+        : collapsed
+      const dedupeKey = truncated.toLowerCase()
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey)
+        lines.push(truncated)
+      } else {
+        removedDuplicates++
+      }
+    }
+
+    return { lines, removedDuplicates }
+  }
+
+  private selectLines(lines: string[], maxChars: number, maxLines: number): string[] {
+    const prioritized = lines.map((line, idx) => ({ line, idx, priority: this.linePriority(line) }))
+    const selected = new Map<number, string>()
+
+    for (let priority = 0; priority <= 3; priority++) {
+      for (const item of prioritized) {
+        if (item.priority !== priority || selected.has(item.idx)) continue
+        const candidate = Array.from(selected.values()).concat(item.line)
+        if (candidate.length > maxLines) continue
+        if (this.joinedCharCount(candidate) > maxChars) continue
+        selected.set(item.idx, item.line)
+      }
+    }
+
+    return Array.from(selected.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([, line]) => line)
+  }
+
+  private linePriority(line: string): number {
+    const corePatterns = [
+      '- Scope:', '- Current work:', '- Pending work:', '- Key files:',
+      '- Tools mentioned:', '- Recent user requests:', '- Previously compacted:',
+      '- Newly compacted:', 'Conversation summary:', 'Summary:',
+    ]
+    if (corePatterns.some(p => line.startsWith(p))) return 0
+    if (line.trimEnd().endsWith(':')) return 1
+    if (/^\s*[-*]/.test(line)) return 2
+    return 3
+  }
+
+  private joinedCharCount(lines: string[]): number {
+    return lines.reduce((sum, l) => sum + l.length, 0) + Math.max(0, lines.length - 1)
+  }
+
+  // ── Cleanup / Eviction ──
+
+  startCleanup(): void {
+    const cron = require('node-cron')
+    const minute = Math.floor(Math.random() * 5) + 1
+    const expression = `${minute} */${CLEANUP_INTERVAL_MINUTES} * * *`
+    console.log(`[SessionStore] Cleanup job scheduled: ${expression}`)
+
+    this.cleanupJob = cron.schedule(expression, () => {
+      this.runCleanup()
+    })
+  }
+
+  stopCleanup(): void {
+    if (this.cleanupJob) {
+      this.cleanupJob.stop()
+      this.cleanupJob = null
+    }
+  }
+
+  runCleanup(): { evictedByTtl: number; evictedByMaxCount: number; remaining: number } {
+    let evictedByTtl = 0
+    let evictedByMaxCount = 0
+
+    // TTL eviction
+    const ttlResult = this.db.prepare(`
+      DELETE FROM agent_sessions
+      WHERE updated_at < datetime('now', 'localtime', '-${SESSION_TTL_HOURS} hours')
+    `).run()
+    evictedByTtl = ttlResult.changes
+
+    // Cascade delete orphaned messages and compactions
+    this.db.prepare(`
+      DELETE FROM agent_messages WHERE session_key NOT IN (SELECT id FROM agent_sessions)
+    `).run()
+    this.db.prepare(`
+      DELETE FROM agent_compactions WHERE session_key NOT IN (SELECT id FROM agent_sessions)
+    `).run()
+
+    // Max session count eviction
+    const countRow = this.db.prepare('SELECT COUNT(*) as c FROM agent_sessions').get() as any
+    const total = countRow?.c || 0
+    if (total > MAX_SESSIONS) {
+      const excess = total - MAX_SESSIONS
+      const evictResult = this.db.prepare(`
+        DELETE FROM agent_sessions WHERE id IN (
+          SELECT id FROM agent_sessions ORDER BY updated_at ASC LIMIT ?
+        )
+      `).run(excess)
+      evictedByMaxCount = evictResult.changes
+
+      this.db.prepare(`
+        DELETE FROM agent_messages WHERE session_key NOT IN (SELECT id FROM agent_sessions)
+      `).run()
+      this.db.prepare(`
+        DELETE FROM agent_compactions WHERE session_key NOT IN (SELECT id FROM agent_sessions)
+      `).run()
+    }
+
+    // Sync in-memory map
+    if (this.sessionsRef) {
+      const dbKeys = new Set(
+        (this.db.prepare('SELECT id FROM agent_sessions').all() as any[]).map(r => r.id)
+      )
+      for (const key of this.sessionsRef.keys()) {
+        if (!dbKeys.has(key)) {
+          this.sessionsRef.delete(key)
+        }
+      }
+    }
+
+    const remaining = (this.db.prepare('SELECT COUNT(*) as c FROM agent_sessions').get() as any)?.c || 0
+    console.log(`[SessionStore] Cleanup: evicted ${evictedByTtl} by TTL, ${evictedByMaxCount} by max count, ${remaining} remaining`)
+
+    return { evictedByTtl, evictedByMaxCount, remaining }
+  }
+
+  // ── Helpers ──
+
+  private syncMessagesToDb(key: string, messages: Session['messages']): void {
+    const insert = this.db.prepare(`
+      INSERT INTO agent_messages (session_key, role, content, tool_call_id, tool_calls_json, seq)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i]
+      insert.run(
+        key,
+        m.role,
+        this.truncateField(m.content),
+        m.toolCallId || '',
+        m.toolCalls ? JSON.stringify(m.toolCalls) : '',
+        i,
+      )
+    }
+  }
+
+  private truncateField(text: string, maxChars: number = 16384): string {
+    if (text.length <= maxChars) return text
+    return text.slice(0, maxChars) + '... [truncated for session storage]'
+  }
+
+  private truncateSummary(text: string, maxChars: number): string {
+    if (text.length <= maxChars) return text
+    return text.slice(0, maxChars - 1) + '…'
+  }
+
+  close(): void {
+    this.stopCleanup()
+    this.db.close()
+  }
+}
+
+const COMPACT_PREAMBLE = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n'
+const COMPACT_RECENT_NOTE = 'Recent messages are preserved verbatim.'
+
+// Token estimation helper
+export function estimateTokens(text: string): number {
+  const cjkChars = (text.match(/[一-鿿㐀-䶿]/g) || []).length
+  const otherChars = text.length - cjkChars
+  return Math.ceil(cjkChars * 1.5 + otherChars * 0.25)
+}

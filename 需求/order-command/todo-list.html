@@ -1,0 +1,1079 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920">
+<title>订单履约控制塔 — 任务列表</title>
+<style>
+/* ── Modern Minimal: Linear/Vercel direction ── */
+:root {
+  --bg:      oklch(99% 0.002 240);
+  --surface: oklch(100% 0 0);
+  --fg:      oklch(18% 0.012 250);
+  --muted:   oklch(54% 0.012 250);
+  --border:  oklch(92% 0.005 250);
+  --accent:  oklch(58% 0.18 255);
+  --accent-bg: oklch(95% 0.04 255);
+
+  --success:  oklch(55% 0.16 145);
+  --success-bg: oklch(96% 0.04 145);
+  --warning:  oklch(65% 0.16 75);
+  --warning-bg: oklch(97% 0.04 80);
+  --danger:   oklch(58% 0.20 25);
+  --danger-bg: oklch(97% 0.04 25);
+  --neutral-bg: oklch(95% 0.005 250);
+
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  --nav-h: 48px;
+  --sidebar-w: 240px;
+  --radius: 6px;
+  --radius-sm: 4px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Top Navigation ── */
+.topnav {
+  height: var(--nav-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px 0 0;
+  gap: 0;
+  flex-shrink: 0;
+  z-index: 100;
+}
+.topnav-logo {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; height: 100%;
+  border-right: 1px solid var(--border);
+  font-size: 14px; font-weight: 600; color: var(--fg);
+  letter-spacing: -0.02em; white-space: nowrap; min-width: 180px;
+}
+.topnav-logo-icon {
+  width: 28px; height: 28px; background: var(--accent);
+  border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.topnav-logo-icon svg { fill: #fff; }
+.topnav-tabs { display: flex; align-items: stretch; height: 100%; flex: 1; }
+.topnav-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 16px; height: 100%; font-size: 13px; color: var(--muted);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  transition: color 120ms ease-out, border-color 120ms ease-out;
+  white-space: nowrap; user-select: none; text-decoration: none;
+}
+.topnav-tab:hover { color: var(--fg); }
+.topnav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.topnav-tab svg { opacity: 0.7; flex-shrink: 0; }
+.topnav-tab.active svg { opacity: 1; }
+.topnav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.topnav-user {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px 4px 4px; border-radius: var(--radius);
+  cursor: pointer; transition: background 120ms ease-out;
+}
+.topnav-user:hover { background: var(--bg); }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; flex-shrink: 0;
+}
+.topnav-username { font-size: 13px; font-weight: 500; color: var(--fg); }
+.topnav-tag {
+  font-size: 11px; color: var(--muted); background: var(--neutral-bg);
+  padding: 1px 6px; border-radius: 3px; font-family: var(--font-mono);
+}
+
+/* ── Sub Navigation ── */
+.sub-nav {
+  height: 38px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.sub-nav-tab {
+  padding: 0 18px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+  transition: color 120ms, border-color 120ms;
+  white-space: nowrap;
+}
+.sub-nav-tab:hover { color: var(--fg); }
+.sub-nav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.sub-nav-count {
+  font-size: 10px; font-weight: 500; color: var(--muted);
+  background: var(--neutral-bg); padding: 1px 6px; border-radius: 8px;
+  font-family: var(--font-mono);
+}
+.sub-nav-tab.active .sub-nav-count { background: var(--accent-bg); color: var(--accent); }
+.sub-nav-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.sub-nav-spacer { flex: 1; }
+
+/* ── App Body ── */
+.app-body { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Left Sidebar ── */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.sidebar-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; }
+.sidebar-scroll::-webkit-scrollbar { width: 4px; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.filter-group { padding: 12px 14px 8px; }
+.filter-group-title {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  letter-spacing: 0.04em; margin-bottom: 8px; padding: 0 4px;
+  cursor: pointer; user-select: none;
+}
+.filter-group-title:hover { color: var(--fg); }
+.filter-group + .filter-group { border-top: 1px solid var(--border); }
+
+.filter-option {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--fg); cursor: pointer;
+  transition: background 80ms; margin-bottom: 1px;
+}
+.filter-option:hover { background: var(--bg); }
+.filter-option.active { background: var(--accent-bg); color: var(--accent); font-weight: 500; }
+.filter-option-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: var(--border);
+}
+.filter-option.active .filter-option-dot { background: var(--accent); }
+.filter-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-option-count {
+  font-size: 10px; color: var(--muted); font-family: var(--font-mono);
+  background: var(--neutral-bg); padding: 1px 6px; border-radius: 8px; flex-shrink: 0;
+}
+.filter-option.active .filter-option-count { background: var(--accent-bg); color: var(--accent); }
+
+.filter-search {
+  margin: 0 14px 8px; position: relative;
+}
+.filter-search input {
+  width: 100%; height: 28px; padding: 0 8px 0 28px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 11px; font-family: var(--font-body); color: var(--fg);
+  background: var(--bg); outline: none;
+  transition: border-color 120ms;
+}
+.filter-search input:focus { border-color: var(--accent); }
+.filter-search svg {
+  position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none;
+}
+
+/* ── Main Content ── */
+.main-content {
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden; background: var(--bg);
+}
+
+/* Content Toolbar */
+.content-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.content-toolbar-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.content-toolbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+.search-box {
+  position: relative; width: 320px;
+}
+.search-box-input {
+  width: 100%; height: 30px; padding: 0 10px 0 32px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px; font-family: var(--font-body); color: var(--fg);
+  background: var(--bg); outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.search-box-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px oklch(58% 0.18 255 / 0.10); }
+.search-box-icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none; display: flex;
+}
+
+.filter-chips { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 26px; padding: 0 10px; border-radius: 13px;
+  font-size: 11px; color: var(--muted); background: var(--bg);
+  border: 1px solid var(--border); cursor: pointer;
+  transition: all 120ms; white-space: nowrap; user-select: none;
+}
+.filter-chip:hover { border-color: var(--accent); color: var(--accent); }
+.filter-chip.active { background: var(--accent-bg); color: var(--accent); border-color: oklch(88% 0.07 255); font-weight: 500; }
+.filter-chip-close {
+  width: 14px; height: 14px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; opacity: 0.5; transition: opacity 120ms; flex-shrink: 0;
+}
+.filter-chip-close:hover { opacity: 1; }
+
+/* Stat Strip */
+.stat-strip {
+  display: flex; gap: 12px; padding: 14px 16px; flex-shrink: 0;
+}
+.stat-card {
+  flex: 1; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
+  cursor: pointer; transition: border-color 120ms, box-shadow 120ms;
+}
+.stat-card:hover { border-color: var(--accent); box-shadow: 0 1px 6px rgba(0,0,0,0.04); }
+.stat-card-label { font-size: 11px; color: var(--muted); }
+.stat-card-value {
+  font-family: var(--font-mono); font-size: 24px; font-weight: 700;
+  color: var(--fg); font-variant-numeric: tabular-nums;
+}
+.stat-card-sub { font-size: 11px; color: var(--muted); }
+
+/* ── Data Table ── */
+.table-wrapper { flex: 1; overflow: auto; }
+.table-wrapper::-webkit-scrollbar { width: 5px; height: 5px; }
+.table-wrapper::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.data-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.data-table thead th {
+  padding: 10px 12px; text-align: left; font-weight: 600; font-size: 11px;
+  color: #fff; white-space: nowrap; letter-spacing: 0.02em;
+  background: var(--accent); user-select: none;
+}
+.data-table thead th:first-child { padding-left: 16px; }
+.data-table thead th.sortable {
+  cursor: pointer; transition: background 120ms;
+}
+.data-table thead th.sortable:hover { background: oklch(52% 0.18 255); }
+.data-table thead th .sort-arrow {
+  display: inline-block; margin-left: 4px; opacity: 0.5; font-size: 10px;
+}
+.data-table thead th.sortable.asc .sort-arrow,
+.data-table thead th.sortable.desc .sort-arrow { opacity: 1; }
+
+.data-table td {
+  padding: 10px 12px; border-bottom: 1px solid oklch(95% 0.003 250);
+  vertical-align: middle; white-space: nowrap;
+}
+.data-table td:first-child { padding-left: 16px; }
+.data-table tbody tr {
+  transition: background 80ms ease-out;
+}
+.data-table tbody tr:hover { background: oklch(98% 0.003 250); }
+.data-table tbody tr.selected { background: var(--accent-bg); }
+.data-table tbody tr.row-overdue td { background: oklch(99% 0.01 35); }
+.data-table tbody tr.row-overdue:hover td { background: oklch(98% 0.015 35) !important; }
+
+/* Table Cell Styles */
+.td-id {
+  font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+  cursor: pointer; text-decoration: none; font-weight: 500;
+}
+.td-id:hover { text-decoration: underline; }
+.td-contract {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  cursor: pointer; text-decoration: none;
+}
+.td-contract:hover { text-decoration: underline; color: var(--accent); }
+.td-title { font-weight: 500; font-size: 12px; line-height: 1.4; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.td-title-desc { font-size: 11px; color: var(--muted); margin-top: 1px; line-height: 1.4; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.td-date { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.td-date.overdue { color: var(--danger); font-weight: 600; }
+.td-assignee { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.assignee-avatar {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-bg); color: var(--accent);
+  font-size: 10px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.td-actions { display: flex; align-items: center; gap: 4px; }
+
+/* ── Badges ── */
+.badge-pill {
+  display: inline-flex; align-items: center; padding: 2px 8px;
+  border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap;
+}
+.badge-pill.default  { background: var(--neutral-bg); color: var(--muted); }
+.badge-pill.progress { background: var(--accent-bg); color: var(--accent); }
+.badge-pill.success  { background: var(--success-bg); color: var(--success); }
+.badge-pill.warning  { background: var(--warning-bg); color: var(--warning); }
+.badge-pill.danger   { background: var(--danger-bg); color: var(--danger); }
+.badge-pill.info     { background: oklch(94% 0.04 255); color: oklch(42% 0.16 255); }
+
+.priority-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.priority-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.priority-dot.high { background: var(--danger); }
+.priority-dot.mid  { background: var(--warning); }
+.priority-dot.low  { background: var(--muted); }
+
+.task-type-badge {
+  display: inline-flex; align-items: center; padding: 2px 8px;
+  border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap;
+}
+.task-type-badge.agent { background: var(--accent-bg); color: var(--accent); }
+.task-type-badge.decision { background: var(--warning-bg); color: var(--warning); }
+.task-type-badge.manual { background: var(--neutral-bg); color: var(--muted); }
+
+/* ── Pagination ── */
+.pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; background: var(--surface);
+  border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.pagination-info { font-size: 12px; color: var(--muted); }
+.pagination-controls { display: flex; align-items: center; gap: 4px; }
+.page-btn {
+  width: 28px; height: 28px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface);
+  font-size: 12px; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 120ms; font-family: var(--font-mono);
+}
+.page-btn:hover { border-color: var(--accent); color: var(--accent); }
+.page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  height: 30px; padding: 0 14px; border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 12px; font-weight: 500;
+  cursor: pointer; border: none; transition: background 120ms ease-out;
+  white-space: nowrap; text-decoration: none;
+}
+.btn-sm { height: 26px; padding: 0 10px; font-size: 11px; }
+.btn-primary { background: var(--fg); color: #fff; }
+.btn-primary:hover { background: oklch(28% 0.012 250); }
+.btn-outline { background: var(--surface); color: var(--fg); border: 1px solid var(--border); }
+.btn-outline:hover { background: var(--bg); border-color: oklch(80% 0.01 250); }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-accent:hover { background: oklch(52% 0.18 255); }
+.btn-ghost { background: transparent; color: var(--muted); border: 1px solid transparent; }
+.btn-ghost:hover { background: var(--bg); color: var(--fg); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { background: oklch(52% 0.20 25); }
+
+input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+</style>
+</head>
+<body>
+
+<!-- ── TOP NAVIGATION ── -->
+<nav class="topnav">
+  <div class="topnav-logo">
+    <div class="topnav-logo-icon">
+      <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2h4v4H2zM8 2h4v4H8zM2 8h4v4H2zM8 8h4v4H8z" opacity="0.9"/></svg>
+    </div>
+    订单履约控制塔
+  </div>
+  <div class="topnav-tabs">
+    <a class="topnav-tab" href="index.html">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M7 1L13 5v8H9V9H5v4H1V5L7 1z"/></svg>首页
+    </a>
+    <a class="topnav-tab" href="history-analysis.html">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M2 2h10v2H2zM2 6h10v2H2zM2 10h6v2H2z"/></svg>历史分析
+    </a>
+    <a class="topnav-tab active" href="todo-list.html">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M5 1h4v3l1 1h3v8H1V1h4zm2 5a2 2 0 100 4 2 2 0 000-4z"/></svg>
+      任务列表
+      <span class="tag-chip" style="background:var(--accent-bg);color:var(--accent);font-size:10px;padding:1px 5px;border-radius:3px;margin-left:2px;font-family:var(--font-mono);">42</span>
+    </a>
+    <a class="topnav-tab" href="#">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M7 1a2 2 0 110 4 2 2 0 010-4zM2 6h10v1a5 5 0 01-10 0V6zM1 13h12v1H1z"/></svg>系统设置
+    </a>
+  </div>
+  <div class="topnav-right">
+    <div class="topnav-user">
+      <div class="avatar">Hi</div>
+      <span class="topnav-username">Hi·金星米</span>
+      <span class="topnav-tag">运营</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ── SUB NAVIGATION ── -->
+<div class="sub-nav">
+  <a class="sub-nav-tab active" data-filter="all">全部任务<span class="sub-nav-count">42</span></a>
+  <a class="sub-nav-tab" data-filter="ship">发货任务<span class="sub-nav-count">18</span></a>
+  <a class="sub-nav-tab" data-filter="inbound">入库任务<span class="sub-nav-count">10</span></a>
+  <a class="sub-nav-tab" data-filter="contract">合同确认<span class="sub-nav-count">8</span></a>
+  <a class="sub-nav-tab" data-filter="exception">异常处理<span class="sub-nav-count">6</span></a>
+  <div class="sub-nav-spacer"></div>
+  <div class="sub-nav-actions">
+    <button class="btn btn-ghost btn-sm" onclick="toggleSelectMode()">批量操作</button>
+  </div>
+</div>
+
+<!-- ── APP BODY ── -->
+<div class="app-body">
+
+  <!-- Left Sidebar — Filters -->
+  <aside class="sidebar">
+    <div class="sidebar-scroll">
+
+      <!-- Contract Filter -->
+      <div class="filter-group">
+        <div class="filter-group-title" onclick="toggleFilterGroup(this)">
+          关联合同
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor" style="transition:transform 150ms"><path d="M0 0l5 6 5-6z"/></svg>
+        </div>
+        <div class="filter-search">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M9 9l3.5 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <input type="text" placeholder="搜索合同编号..." oninput="filterSidebarOptions(this, 'contract')">
+        </div>
+        <div class="filter-option active" data-group="contract" data-value="all">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">全部合同</span>
+          <span class="filter-option-count">42</span>
+        </div>
+        <div class="filter-option" data-group="contract" data-value="SCJD20241114-K01">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">SCJD20241114-K01</span>
+          <span class="filter-option-count">12</span>
+        </div>
+        <div class="filter-option" data-group="contract" data-value="SCJD20241114-K02">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">SCJD20241114-K02</span>
+          <span class="filter-option-count">8</span>
+        </div>
+        <div class="filter-option" data-group="contract" data-value="SCJD20241114-K03">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">SCJD20241114-K03</span>
+          <span class="filter-option-count">5</span>
+        </div>
+        <div class="filter-option" data-group="contract" data-value="SCJD20241114-K04">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">SCJD20241114-K04</span>
+          <span class="filter-option-count">11</span>
+        </div>
+        <div class="filter-option" data-group="contract" data-value="SCJD20241114-K05">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">SCJD20241114-K05</span>
+          <span class="filter-option-count">6</span>
+        </div>
+      </div>
+
+      <!-- Task Type Filter -->
+      <div class="filter-group">
+        <div class="filter-group-title" onclick="toggleFilterGroup(this)">
+          任务类型
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor" style="transition:transform 150ms"><path d="M0 0l5 6 5-6z"/></svg>
+        </div>
+        <div class="filter-option active" data-group="type" data-value="all">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">全部类型</span>
+          <span class="filter-option-count">42</span>
+        </div>
+        <div class="filter-option" data-group="type" data-value="agent">
+          <span class="filter-option-dot" style="background:var(--accent)"></span>
+          <span class="filter-option-label">Agent任务</span>
+          <span class="filter-option-count">15</span>
+        </div>
+        <div class="filter-option" data-group="type" data-value="decision">
+          <span class="filter-option-dot" style="background:var(--warning)"></span>
+          <span class="filter-option-label">决策任务</span>
+          <span class="filter-option-count">12</span>
+        </div>
+        <div class="filter-option" data-group="type" data-value="manual">
+          <span class="filter-option-dot" style="background:var(--muted)"></span>
+          <span class="filter-option-label">手工任务</span>
+          <span class="filter-option-count">15</span>
+        </div>
+      </div>
+
+      <!-- Priority Filter -->
+      <div class="filter-group">
+        <div class="filter-group-title" onclick="toggleFilterGroup(this)">
+          优先级
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor" style="transition:transform 150ms"><path d="M0 0l5 6 5-6z"/></svg>
+        </div>
+        <div class="filter-option active" data-group="priority" data-value="all">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">全部优先级</span>
+          <span class="filter-option-count">42</span>
+        </div>
+        <div class="filter-option" data-group="priority" data-value="high">
+          <span class="filter-option-dot" style="background:var(--danger)"></span>
+          <span class="filter-option-label">高优先级</span>
+          <span class="filter-option-count">7</span>
+        </div>
+        <div class="filter-option" data-group="priority" data-value="mid">
+          <span class="filter-option-dot" style="background:var(--warning)"></span>
+          <span class="filter-option-label">中优先级</span>
+          <span class="filter-option-count">21</span>
+        </div>
+        <div class="filter-option" data-group="priority" data-value="low">
+          <span class="filter-option-dot" style="background:var(--muted)"></span>
+          <span class="filter-option-label">低优先级</span>
+          <span class="filter-option-count">14</span>
+        </div>
+      </div>
+
+      <!-- Status Filter -->
+      <div class="filter-group">
+        <div class="filter-group-title" onclick="toggleFilterGroup(this)">
+          任务状态
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor" style="transition:transform 150ms"><path d="M0 0l5 6 5-6z"/></svg>
+        </div>
+        <div class="filter-option active" data-group="status" data-value="all">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">全部状态</span>
+          <span class="filter-option-count">42</span>
+        </div>
+        <div class="filter-option" data-group="status" data-value="pending">
+          <span class="filter-option-dot" style="background:var(--muted)"></span>
+          <span class="filter-option-label">待开始</span>
+          <span class="filter-option-count">10</span>
+        </div>
+        <div class="filter-option" data-group="status" data-value="progress">
+          <span class="filter-option-dot" style="background:var(--accent)"></span>
+          <span class="filter-option-label">进行中</span>
+          <span class="filter-option-count">23</span>
+        </div>
+        <div class="filter-option" data-group="status" data-value="overdue">
+          <span class="filter-option-dot" style="background:var(--danger)"></span>
+          <span class="filter-option-label">已逾期</span>
+          <span class="filter-option-count">5</span>
+        </div>
+        <div class="filter-option" data-group="status" data-value="done">
+          <span class="filter-option-dot" style="background:var(--success)"></span>
+          <span class="filter-option-label">已完成</span>
+          <span class="filter-option-count">4</span>
+        </div>
+      </div>
+
+      <!-- Assignee Filter -->
+      <div class="filter-group">
+        <div class="filter-group-title" onclick="toggleFilterGroup(this)">
+          负责人
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor" style="transition:transform 150ms"><path d="M0 0l5 6 5-6z"/></svg>
+        </div>
+        <div class="filter-search">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4.5" stroke="currentColor" stroke-width="1.2"/><path d="M9 9l3.5 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <input type="text" placeholder="搜索负责人..." oninput="filterSidebarOptions(this, 'assignee')">
+        </div>
+        <div class="filter-option active" data-group="assignee" data-value="all">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">全部人员</span>
+          <span class="filter-option-count">42</span>
+        </div>
+        <div class="filter-option" data-group="assignee" data-value="张伟">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">张伟</span>
+          <span class="filter-option-count">14</span>
+        </div>
+        <div class="filter-option" data-group="assignee" data-value="李明">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">李明</span>
+          <span class="filter-option-count">10</span>
+        </div>
+        <div class="filter-option" data-group="assignee" data-value="王芳">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">王芳</span>
+          <span class="filter-option-count">8</span>
+        </div>
+        <div class="filter-option" data-group="assignee" data-value="赵强">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">赵强</span>
+          <span class="filter-option-count">6</span>
+        </div>
+        <div class="filter-option" data-group="assignee" data-value="陈敏">
+          <span class="filter-option-dot"></span>
+          <span class="filter-option-label">陈敏</span>
+          <span class="filter-option-count">4</span>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+
+    <!-- Content Toolbar: Search + Quick Filters -->
+    <div class="content-toolbar">
+      <div class="content-toolbar-left">
+        <div class="search-box">
+          <span class="search-box-icon">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.2"/><path d="M10 10l3.5 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          </span>
+          <input class="search-box-input" type="text" id="globalSearch" placeholder="搜索任务编号、合同、说明..." oninput="applyAllFilters()">
+        </div>
+        <div class="filter-chips" id="quickFilters">
+          <span class="filter-chip" data-quick="overdue" onclick="toggleQuickFilter(this)">逾期任务</span>
+          <span class="filter-chip" data-quick="today" onclick="toggleQuickFilter(this)">今日到期</span>
+          <span class="filter-chip" data-quick="mine" onclick="toggleQuickFilter(this)">我的任务</span>
+          <span class="filter-chip" data-quick="high" onclick="toggleQuickFilter(this)">高优先级</span>
+        </div>
+      </div>
+      <div class="content-toolbar-right">
+        <span class="page-btn" style="border:none;color:var(--muted);font-size:11px;width:auto;cursor:default;" id="resultCount">共 <strong style="color:var(--fg);">42</strong> 条</span>
+        <button class="btn btn-outline btn-sm">批量标记完成</button>
+        <button class="btn btn-accent btn-sm">分配任务</button>
+        <button class="btn btn-outline btn-sm" onclick="exportTaskList()">导出</button>
+      </div>
+    </div>
+
+    <!-- Stat Strip -->
+    <div class="stat-strip">
+      <div class="stat-card" onclick="quickFilterByStatus('all')">
+        <div class="stat-card-label">全部任务</div>
+        <div class="stat-card-value">42</div>
+        <div class="stat-card-sub">涉及 5 份合同 · 5 位负责人</div>
+      </div>
+      <div class="stat-card" onclick="quickFilterByStatus('progress')">
+        <div class="stat-card-label">进行中</div>
+        <div class="stat-card-value" style="color:var(--accent);">23</div>
+        <div class="stat-card-sub">占比 54.8%</div>
+      </div>
+      <div class="stat-card" onclick="quickFilterByStatus('overdue')">
+        <div class="stat-card-label">逾期未处理</div>
+        <div class="stat-card-value" style="color:var(--danger);">5</div>
+        <div class="stat-card-sub" style="color:var(--danger);">需立即处理</div>
+      </div>
+      <div class="stat-card" onclick="quickFilterByStatus('pending')">
+        <div class="stat-card-label">待开始</div>
+        <div class="stat-card-value" style="color:var(--muted);">10</div>
+        <div class="stat-card-sub">本周新增 3 项</div>
+      </div>
+      <div class="stat-card" onclick="quickFilterByStatus('done')">
+        <div class="stat-card-label">已完成</div>
+        <div class="stat-card-value" style="color:var(--success);">4</div>
+        <div class="stat-card-sub">本周完成率 33.3%</div>
+      </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="table-wrapper">
+      <table class="data-table" id="taskTable">
+        <thead>
+          <tr>
+            <th style="width:36px"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
+            <th style="width:24px">#</th>
+            <th class="sortable" style="width:140px;min-width:130px;" onclick="sortTable('id')">任务编号 <span class="sort-arrow">↕</span></th>
+            <th style="width:130px;min-width:120px;">关联合同</th>
+            <th style="width:90px;">任务类型</th>
+            <th style="min-width:200px;">任务说明</th>
+            <th class="sortable" style="width:70px;" onclick="sortTable('priority')">优先级 <span class="sort-arrow">↕</span></th>
+            <th style="width:100px;">负责人</th>
+            <th class="sortable" style="width:100px;" onclick="sortTable('dueDate')">截止日期 <span class="sort-arrow">↕</span></th>
+            <th style="width:80px;">状态</th>
+            <th style="width:130px;">操作</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination">
+      <div class="pagination-info">
+        显示 <span style="font-family:var(--font-mono);" id="rangeStart">1</span>–<span style="font-family:var(--font-mono);" id="rangeEnd">20</span> 条，共 <span style="font-family:var(--font-mono); font-weight:600;" id="totalFiltered">42</span> 条
+      </div>
+      <div class="pagination-controls" id="paginationControls">
+        <button class="page-btn">‹</button>
+        <button class="page-btn active">1</button>
+        <button class="page-btn">2</button>
+        <button class="page-btn">3</button>
+        <button class="page-btn">›</button>
+        <div style="width:8px;"></div>
+        <select class="page-size-select" id="pageSize" onchange="currentPage=1;renderTable()" style="height:28px;padding:0 20px 0 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;font-family:var(--font-body);color:var(--fg);background:var(--surface);appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%278%27 height=%275%27 viewBox=%270 0 8 5%27%3E%3Cpath d=%27M0 0l4 5 4-5z%27 fill=%27%23a0aec0%27/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 6px center;cursor:pointer;">
+          <option>20/页</option><option>50/页</option><option>100/页</option>
+        </select>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// GLOBAL TASK DATA — All tasks across all contracts
+// ═══════════════════════════════════════════════
+const allTasks = [
+  // Shipment tasks
+  { id:'T-20241114-001', contract:'SCJD20241114-K01', type:'agent', typeLabel:'Agent任务', title:'确认发货计划', desc:'华北大区 · 安徽仓库 · 铜精矿 5000吨', priority:'high', priorityLabel:'高', assignee:'张伟', dueDate:'2024/11/16', dueDateRaw:'2024-11-16', status:'overdue', statusLabel:'逾期', category:'ship', categoryLabel:'发货任务', detailUrl:'task-agent.html' },
+  { id:'T-20241114-002', contract:'SCJD20241114-K01', type:'manual', typeLabel:'手工任务', title:'核对出库单信息', desc:'含铁品位 63.5% · 湿吨计价', priority:'high', priorityLabel:'高', assignee:'李明', dueDate:'2024/11/17', dueDateRaw:'2024-11-17', status:'progress', statusLabel:'进行中', category:'ship', categoryLabel:'发货任务', detailUrl:'task-manual.html' },
+  { id:'T-20241114-003', contract:'SCJD20241114-K02', type:'decision', typeLabel:'决策任务', title:'确认运输车辆安排', desc:'山西太原 · 要求13米平板车', priority:'mid', priorityLabel:'中', assignee:'王芳', dueDate:'2024/11/18', dueDateRaw:'2024-11-18', status:'progress', statusLabel:'进行中', category:'ship', categoryLabel:'发货任务', detailUrl:'task-decision.html' },
+  { id:'T-20241114-004', contract:'SCJD20241114-K01', type:'decision', typeLabel:'决策任务', title:'签署发货通知单', desc:'需三方签章 · 电子签', priority:'high', priorityLabel:'高', assignee:'赵强', dueDate:'2024/11/15', dueDateRaw:'2024-11-15', status:'overdue', statusLabel:'逾期', category:'ship', categoryLabel:'发货任务', detailUrl:'task-decision.html' },
+  { id:'T-20241114-005', contract:'SCJD20241114-K03', type:'manual', typeLabel:'手工任务', title:'更新物流跟踪编号', desc:'SF-20241114-0892', priority:'low', priorityLabel:'低', assignee:'陈敏', dueDate:'2024/11/20', dueDateRaw:'2024-11-20', status:'pending', statusLabel:'待开始', category:'ship', categoryLabel:'发货任务', detailUrl:'task-manual.html' },
+  { id:'T-20241114-006', contract:'SCJD20241114-K04', type:'agent', typeLabel:'Agent任务', title:'生成发货清单PDF', desc:'含装箱单 · 检测报告 · 原产地证', priority:'mid', priorityLabel:'中', assignee:'张伟', dueDate:'2024/11/19', dueDateRaw:'2024-11-19', status:'progress', statusLabel:'进行中', category:'ship', categoryLabel:'发货任务', detailUrl:'task-agent.html' },
+  { id:'T-20241114-007', contract:'SCJD20241114-K02', type:'agent', typeLabel:'Agent任务', title:'核对运输路线', desc:'太原→天津港 · 陆运+海运', priority:'low', priorityLabel:'低', assignee:'王芳', dueDate:'2024/11/22', dueDateRaw:'2024-11-22', status:'pending', statusLabel:'待开始', category:'ship', categoryLabel:'发货任务', detailUrl:'task-agent.html' },
+  { id:'T-20241114-008', contract:'SCJD20241114-K05', type:'manual', typeLabel:'手工任务', title:'打印装箱单标签', desc:'每箱贴二维码 · 共24箱', priority:'mid', priorityLabel:'中', assignee:'张伟', dueDate:'2024/11/18', dueDateRaw:'2024-11-18', status:'done', statusLabel:'已完成', category:'ship', categoryLabel:'发货任务', detailUrl:'task-manual.html' },
+  { id:'T-20241114-009', contract:'SCJD20241114-K04', type:'decision', typeLabel:'决策任务', title:'确认分批发货方案', desc:'第一批60% · 第二批40% · 间隔7天', priority:'high', priorityLabel:'高', assignee:'赵强', dueDate:'2024/11/16', dueDateRaw:'2024-11-16', status:'progress', statusLabel:'进行中', category:'ship', categoryLabel:'发货任务', detailUrl:'task-decision.html' },
+  { id:'T-20241114-010', contract:'SCJD20241114-K03', type:'agent', typeLabel:'Agent任务', title:'核对收货地址', desc:'华东区 · 上海市浦东新区 · 核对邮编', priority:'low', priorityLabel:'低', assignee:'李明', dueDate:'2024/11/25', dueDateRaw:'2024-11-25', status:'pending', statusLabel:'待开始', category:'ship', categoryLabel:'发货任务', detailUrl:'task-agent.html' },
+  { id:'T-20241114-011', contract:'SCJD20241114-K01', type:'manual', typeLabel:'手工任务', title:'更新客户联系人', desc:'新增联系人王经理 · 电话核实', priority:'mid', priorityLabel:'中', assignee:'张伟', dueDate:'2024/11/21', dueDateRaw:'2024-11-21', status:'progress', statusLabel:'进行中', category:'ship', categoryLabel:'发货任务', detailUrl:'task-manual.html' },
+  { id:'T-20241114-012', contract:'SCJD20241114-K02', type:'decision', typeLabel:'决策任务', title:'确认运费结算方式', desc:'预付30%+到付70% · 需财务审批', priority:'mid', priorityLabel:'中', assignee:'王芳', dueDate:'2024/11/20', dueDateRaw:'2024-11-20', status:'progress', statusLabel:'进行中', category:'ship', categoryLabel:'发货任务', detailUrl:'task-decision.html' },
+
+  // Inbound tasks
+  { id:'T-20241114-019', contract:'SCJD20241114-K02', type:'manual', typeLabel:'手工任务', title:'办理入库登记手续', desc:'山西太原仓 · 预计11月18日到货', priority:'high', priorityLabel:'高', assignee:'张伟', dueDate:'2024/11/19', dueDateRaw:'2024-11-19', status:'pending', statusLabel:'待开始', category:'inbound', categoryLabel:'入库任务', detailUrl:'task-manual.html' },
+  { id:'T-20241114-020', contract:'SCJD20241114-K01', type:'agent', typeLabel:'Agent任务', title:'核对入库数量与合同', desc:'铜精矿 · 允差±2%', priority:'mid', priorityLabel:'中', assignee:'李明', dueDate:'2024/11/21', dueDateRaw:'2024-11-21', status:'progress', statusLabel:'进行中', category:'inbound', categoryLabel:'入库任务', detailUrl:'task-agent.html' },
+  { id:'T-20241114-021', contract:'SCJD20241114-K04', type:'manual', typeLabel:'手工任务', title:'质检报告归档', desc:'铁矿石 · 品位检测报告', priority:'low', priorityLabel:'低', assignee:'王芳', dueDate:'2024/11/25', dueDateRaw:'2024-11-25', status:'pending', statusLabel:'待开始', category:'inbound', categoryLabel:'入库任务', detailUrl:'task-manual.html' },
+  { id:'T-20241114-022', contract:'SCJD20241114-K03', type:'agent', typeLabel:'Agent任务', title:'生成入库验收单', desc:'自动填充合同条款 · 质检参数', priority:'mid', priorityLabel:'中', assignee:'陈敏', dueDate:'2024/11/20', dueDateRaw:'2024-11-20', status:'progress', statusLabel:'进行中', category:'inbound', categoryLabel:'入库任务', detailUrl:'task-agent.html' },
+  { id:'T-20241114-023', contract:'SCJD20241114-K05', type:'decision', typeLabel:'决策任务', title:'确认入库仓库分配', desc:'A仓已满 · 需改配B仓 · 增加运费', priority:'high', priorityLabel:'高', assignee:'赵强', dueDate:'2024/11/17', dueDateRaw:'2024-11-17', status:'overdue', statusLabel:'逾期', category:'inbound', categoryLabel:'入库任务', detailUrl:'task-decision.html' },
+  { id:'T-20241114-024', contract:'SCJD20241114-K04', type:'manual', typeLabel:'手工任务', title:'登记物料批次号', desc:'铁矿石 · 批次HT2025-B03', priority:'low', priorityLabel:'低', assignee:'张伟', dueDate:'2024/11/28', dueDateRaw:'2024-11-28', status:'pending', statusLabel:'待开始', category:'inbound', categoryLabel:'入库任务', detailUrl:'task-manual.html' },
+  { id:'T-20241114-025', contract:'SCJD20241114-K01', type:'agent', typeLabel:'Agent任务', title:'核对质检参数偏差', desc:'铜品位偏差0.3% · 需技术确认', priority:'mid', priorityLabel:'中', assignee:'李明', dueDate:'2024/11/23', dueDateRaw:'2024-11-23', status:'progress', statusLabel:'进行中', category:'inbound', categoryLabel:'入库任务', detailUrl:'task-agent.html' },
+
+  // Contract tasks
+  { id:'T-20241114-029', contract:'SCJD20241114-K03', type:'decision', typeLabel:'决策任务', title:'确认合同价格变更条款', desc:'铜价波动触发调价机制 · 浮动±3%', priority:'high', priorityLabel:'高', assignee:'赵强', dueDate:'2024/11/15', dueDateRaw:'2024-11-15', status:'overdue', statusLabel:'逾期', category:'contract', categoryLabel:'合同确认', detailUrl:'task-decision.html' },
+  { id:'T-20241114-030', contract:'SCJD20241114-K05', type:'decision', typeLabel:'决策任务', title:'签署补充协议', desc:'交货期调整至12月 · 需双方签章', priority:'high', priorityLabel:'高', assignee:'李明', dueDate:'2024/11/18', dueDateRaw:'2024-11-18', status:'progress', statusLabel:'进行中', category:'contract', categoryLabel:'合同确认', detailUrl:'task-decision.html' },
+  { id:'T-20241114-031', contract:'SCJD20241114-K01', type:'manual', typeLabel:'手工任务', title:'更新客户主体信息', desc:'中国铁制股份有限公司 · 华北大区', priority:'low', priorityLabel:'低', assignee:'陈敏', dueDate:'2024/11/28', dueDateRaw:'2024-11-28', status:'pending', statusLabel:'待开始', category:'contract', categoryLabel:'合同确认', detailUrl:'task-manual.html' },
+  { id:'T-20241114-032', contract:'SCJD20241114-K04', type:'agent', typeLabel:'Agent任务', title:'校验合同金额一致性', desc:'对比ERP与CRM数据 · 差异0.5%内', priority:'mid', priorityLabel:'中', assignee:'张伟', dueDate:'2024/11/22', dueDateRaw:'2024-11-22', status:'progress', statusLabel:'进行中', category:'contract', categoryLabel:'合同确认', detailUrl:'task-agent.html' },
+  { id:'T-20241114-033', contract:'SCJD20241114-K02', type:'manual', typeLabel:'手工任务', title:'更新付款条款', desc:'新增信用证支付方式', priority:'low', priorityLabel:'低', assignee:'王芳', dueDate:'2024/11/30', dueDateRaw:'2024-11-30', status:'pending', statusLabel:'待开始', category:'contract', categoryLabel:'合同确认', detailUrl:'task-manual.html' },
+  { id:'T-20241114-034', contract:'SCJD20241114-K05', type:'decision', typeLabel:'决策任务', title:'批准合同延期申请', desc:'客户申请延期15天 · 不可抗力条款', priority:'high', priorityLabel:'高', assignee:'赵强', dueDate:'2024/11/17', dueDateRaw:'2024-11-17', status:'progress', statusLabel:'进行中', category:'contract', categoryLabel:'合同确认', detailUrl:'task-decision.html' },
+  { id:'T-20241114-035', contract:'SCJD20241114-K03', type:'agent', typeLabel:'Agent任务', title:'提取合同关键条款', desc:'生成条款摘要 · 标记风险点', priority:'mid', priorityLabel:'中', assignee:'李明', dueDate:'2024/11/24', dueDateRaw:'2024-11-24', status:'progress', statusLabel:'进行中', category:'contract', categoryLabel:'合同确认', detailUrl:'task-agent.html' },
+  { id:'T-20241114-036', contract:'SCJD20241114-K01', type:'manual', typeLabel:'手工任务', title:'归档合同签字版', desc:'双方已签章 · 上传扫描件', priority:'low', priorityLabel:'低', assignee:'张伟', dueDate:'2024/11/26', dueDateRaw:'2024-11-26', status:'done', statusLabel:'已完成', category:'contract', categoryLabel:'合同确认', detailUrl:'task-manual.html' },
+
+  // Exception tasks
+  { id:'T-20241114-037', contract:'SCJD20241114-K02', type:'agent', typeLabel:'Agent任务', title:'发货地址错误修正', desc:'原地址：山西太原A仓 → 应发B仓', priority:'high', priorityLabel:'高', assignee:'张伟', dueDate:'2024/11/14', dueDateRaw:'2024-11-14', status:'overdue', statusLabel:'逾期', category:'exception', categoryLabel:'异常处理', detailUrl:'task-agent.html' },
+  { id:'T-20241114-038', contract:'SCJD20241114-K04', type:'agent', typeLabel:'Agent任务', title:'物流丢失件理赔跟进', desc:'运单SF202411090032 · 理赔中', priority:'high', priorityLabel:'高', assignee:'王芳', dueDate:'2024/11/17', dueDateRaw:'2024-11-17', status:'progress', statusLabel:'进行中', category:'exception', categoryLabel:'异常处理', detailUrl:'task-agent.html' },
+  { id:'T-20241114-039', contract:'SCJD20241114-K03', type:'decision', typeLabel:'决策任务', title:'供应商延迟发货沟通', desc:'预计延迟3天 · 客户已通知', priority:'mid', priorityLabel:'中', assignee:'赵强', dueDate:'2024/11/19', dueDateRaw:'2024-11-19', status:'progress', statusLabel:'进行中', category:'exception', categoryLabel:'异常处理', detailUrl:'task-decision.html' },
+  { id:'T-20241114-040', contract:'SCJD20241114-K05', type:'manual', typeLabel:'手工任务', title:'记录质量异常台账', desc:'铁矿石品位偏差 · 取样复检', priority:'mid', priorityLabel:'中', assignee:'陈敏', dueDate:'2024/11/20', dueDateRaw:'2024-11-20', status:'pending', statusLabel:'待开始', category:'exception', categoryLabel:'异常处理', detailUrl:'task-manual.html' },
+  { id:'T-20241114-041', contract:'SCJD20241114-K01', type:'decision', typeLabel:'决策任务', title:'启动加急发货流程', desc:'客户要求提前7天 · 评估可行性', priority:'high', priorityLabel:'高', assignee:'李明', dueDate:'2024/11/16', dueDateRaw:'2024-11-16', status:'progress', statusLabel:'进行中', category:'exception', categoryLabel:'异常处理', detailUrl:'task-decision.html' },
+  { id:'T-20241114-042', contract:'SCJD20241114-K04', type:'agent', typeLabel:'Agent任务', title:'异常预警规则配置', desc:'设置发货延迟·质检不合格自动预警', priority:'low', priorityLabel:'低', assignee:'张伟', dueDate:'2024/11/30', dueDateRaw:'2024-11-30', status:'done', statusLabel:'已完成', category:'exception', categoryLabel:'异常处理', detailUrl:'task-agent.html' },
+];
+
+// Filter state
+let activeFilters = {
+  contract: 'all', type: 'all', priority: 'all', status: 'all',
+  assignee: 'all', category: 'all', search: '', quick: new Set()
+};
+let sortField = 'id'; let sortDir = 'asc';
+let currentPage = 1; let pageSizeVal = 20;
+let selectMode = false;
+
+// ═══ RENDER ═══
+function getFilteredTasks() {
+  let tasks = [...allTasks];
+
+  if (activeFilters.category !== 'all') {
+    tasks = tasks.filter(t => t.category === activeFilters.category);
+  }
+  if (activeFilters.contract !== 'all') {
+    tasks = tasks.filter(t => t.contract === activeFilters.contract);
+  }
+  if (activeFilters.type !== 'all') {
+    tasks = tasks.filter(t => t.type === activeFilters.type);
+  }
+  if (activeFilters.priority !== 'all') {
+    tasks = tasks.filter(t => t.priority === activeFilters.priority);
+  }
+  if (activeFilters.status !== 'all') {
+    tasks = tasks.filter(t => t.status === activeFilters.status);
+  }
+  if (activeFilters.assignee !== 'all') {
+    tasks = tasks.filter(t => t.assignee === activeFilters.assignee);
+  }
+
+  // Quick filters
+  if (activeFilters.quick.has('overdue')) tasks = tasks.filter(t => t.status === 'overdue');
+  if (activeFilters.quick.has('high')) tasks = tasks.filter(t => t.priority === 'high');
+  if (activeFilters.quick.has('mine')) tasks = tasks.filter(t => t.assignee === '张伟');
+  if (activeFilters.quick.has('today')) tasks = tasks.filter(t => t.dueDateRaw === '2024-11-14');
+
+  // Global search
+  if (activeFilters.search) {
+    const s = activeFilters.search.toLowerCase();
+    tasks = tasks.filter(t =>
+      t.id.toLowerCase().includes(s) ||
+      t.contract.toLowerCase().includes(s) ||
+      t.title.includes(s) ||
+      t.desc.includes(s) ||
+      t.assignee.includes(s)
+    );
+  }
+
+  // Sort
+  tasks.sort((a, b) => {
+    let cmp = 0;
+    if (sortField === 'id') cmp = a.id.localeCompare(b.id);
+    else if (sortField === 'priority') {
+      const order = { high: 0, mid: 1, low: 2 };
+      cmp = order[a.priority] - order[b.priority];
+    }
+    else if (sortField === 'dueDate') cmp = a.dueDateRaw.localeCompare(b.dueDateRaw);
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+
+  return tasks;
+}
+
+function priorityClass(p) { return p === 'high' ? 'high' : p === 'mid' ? 'mid' : 'low'; }
+function statusClass(s) {
+  return s === 'progress' ? 'progress' : s === 'overdue' ? 'danger' : s === 'done' ? 'success' : 'default';
+}
+
+function renderTable() {
+  const filtered = getFilteredTasks();
+  const total = filtered.length;
+  const size = parseInt(document.getElementById('pageSize').value) || 20;
+  pageSizeVal = size;
+  const pages = Math.ceil(total / size);
+  if (currentPage > pages) currentPage = Math.max(1, pages);
+
+  const start = (currentPage - 1) * size;
+  const pageData = filtered.slice(start, start + size);
+
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = pageData.map((t, i) => `
+    <tr class="${t.status === 'overdue' ? 'row-overdue' : ''}" data-id="${t.id}">
+      <td><input type="checkbox" ${selectMode ? '' : 'style="display:none"'} data-task-id="${t.id}"></td>
+      <td style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">${String(start + i + 1).padStart(2, '0')}</td>
+      <td><a class="td-id" href="${t.detailUrl}">${t.id}</a></td>
+      <td><a class="td-contract" href="#" onclick="filterByContract('${t.contract}');return false;">${t.contract}</a></td>
+      <td><span class="task-type-badge ${t.type}">${t.typeLabel}</span></td>
+      <td><div class="td-title">${t.title}</div><div class="td-title-desc">${t.desc}</div></td>
+      <td><span class="priority-badge"><span class="priority-dot ${priorityClass(t.priority)}"></span>${t.priorityLabel}</span></td>
+      <td><div class="td-assignee"><div class="assignee-avatar">${t.assignee.charAt(0)}</div>${t.assignee}</div></td>
+      <td class="td-date ${t.status === 'overdue' ? 'overdue' : ''}">${t.dueDate}</td>
+      <td><span class="badge-pill ${statusClass(t.status)}">${t.statusLabel}</span></td>
+      <td><div class="td-actions">
+        <a class="td-id" href="${t.detailUrl}" style="font-size:12px;">处理</a>
+        <span style="color:var(--border);margin:0 6px;">|</span>
+        <a class="td-contract" href="#" style="font-size:12px;${t.status==='overdue'?'color:var(--danger)!important':''}">${t.status === 'overdue' ? '催办' : '转交'}</a>
+      </div></td>
+    </tr>
+  `).join('');
+
+  // Update pagination
+  document.getElementById('rangeStart').textContent = total > 0 ? start + 1 : 0;
+  document.getElementById('rangeEnd').textContent = Math.min(start + size, total);
+  document.getElementById('totalFiltered').textContent = total;
+  document.getElementById('resultCount').innerHTML = `共 <strong style="color:var(--fg);">${total}</strong> 条`;
+
+  // Pagination buttons
+  const pc = document.getElementById('paginationControls');
+  pc.querySelectorAll('.page-btn').forEach(b => b.remove());
+  const frag = document.createDocumentFragment();
+  const prevBtn = createPageBtn('‹', currentPage > 1 ? currentPage - 1 : 0);
+  if (currentPage <= 1) prevBtn.style.opacity = '0.4';
+  frag.appendChild(prevBtn);
+  for (let p = 1; p <= pages; p++) {
+    const btn = createPageBtn(String(p), p);
+    if (p === currentPage) btn.classList.add('active');
+    frag.appendChild(btn);
+  }
+  const nextBtn = createPageBtn('›', currentPage < pages ? currentPage + 1 : 0);
+  if (currentPage >= pages) nextBtn.style.opacity = '0.4';
+  frag.appendChild(nextBtn);
+  pc.appendChild(frag);
+
+  // Re-append page size selector
+  const sizeSel = document.getElementById('pageSize');
+  pc.appendChild(document.createTextNode(' '));
+  pc.appendChild(sizeSel);
+
+  // Update checkboxes visibility
+  document.querySelectorAll('#taskTable tbody input[type="checkbox"]').forEach(cb => {
+    cb.style.display = selectMode ? '' : 'none';
+  });
+  document.getElementById('selectAll').style.display = selectMode ? '' : 'none';
+}
+
+function createPageBtn(text, targetPage) {
+  const btn = document.createElement('button');
+  btn.className = 'page-btn';
+  btn.textContent = text;
+  if (targetPage > 0) {
+    btn.addEventListener('click', () => { currentPage = targetPage; renderTable(); });
+  }
+  return btn;
+}
+
+// ═══ FILTERING ═══
+function applyAllFilters() {
+  activeFilters.search = document.getElementById('globalSearch').value.trim();
+  currentPage = 1;
+  renderTable();
+}
+
+function setFilter(group, value) {
+  activeFilters[group] = value;
+  currentPage = 1;
+  renderTable();
+
+  // Update sidebar UI
+  document.querySelectorAll(`.filter-option[data-group="${group}"]`).forEach(opt => {
+    opt.classList.toggle('active', opt.dataset.value === value);
+  });
+}
+
+function toggleQuickFilter(chip) {
+  const key = chip.dataset.quick;
+  if (activeFilters.quick.has(key)) {
+    activeFilters.quick.delete(key);
+    chip.classList.remove('active');
+  } else {
+    activeFilters.quick.add(key);
+    chip.classList.add('active');
+  }
+  currentPage = 1;
+  renderTable();
+}
+
+function quickFilterByStatus(status) {
+  setFilter('status', status);
+  // Also set sub-nav
+  document.querySelectorAll('.sub-nav-tab').forEach(t => t.classList.remove('active'));
+}
+
+function filterByContract(contract) {
+  setFilter('contract', contract);
+}
+
+// Sidebar filter clicks
+document.querySelectorAll('.filter-option[data-group]').forEach(opt => {
+  opt.addEventListener('click', () => {
+    const group = opt.dataset.group;
+    const value = opt.dataset.value;
+    setFilter(group, value);
+    // If clicking contract, also update sub-nav to "all"
+    if (group === 'contract' && value !== 'all') {
+      activeFilters.category = 'all';
+      document.querySelectorAll('.sub-nav-tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('.sub-nav-tab[data-filter="all"]').classList.add('active');
+    }
+  });
+});
+
+// Sidebar search
+function filterSidebarOptions(input, group) {
+  const term = input.value.toLowerCase();
+  document.querySelectorAll(`.filter-option[data-group="${group}"]`).forEach(opt => {
+    if (opt.dataset.value === 'all') return;
+    const show = opt.querySelector('.filter-option-label').textContent.toLowerCase().includes(term);
+    opt.style.display = show ? '' : 'none';
+  });
+}
+
+// Toggle filter groups
+function toggleFilterGroup(titleEl) {
+  const group = titleEl.parentElement;
+  const arrow = titleEl.querySelector('svg');
+  const options = group.querySelectorAll('.filter-option, .filter-search');
+  const collapsed = arrow.style.transform === 'rotate(-90deg)';
+  if (collapsed) {
+    arrow.style.transform = '';
+    options.forEach(o => o.style.display = '');
+  } else {
+    arrow.style.transform = 'rotate(-90deg)';
+    options.forEach(o => o.style.display = 'none');
+  }
+}
+
+// ═══ SUB NAV ═══
+document.querySelectorAll('.sub-nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.sub-nav-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const filter = tab.dataset.filter;
+    activeFilters.category = filter;
+    // Reset contract filter when switching category
+    if (filter !== 'all') {
+      activeFilters.contract = 'all';
+      document.querySelectorAll('.filter-option[data-group="contract"]').forEach(o => {
+        o.classList.toggle('active', o.dataset.value === 'all');
+      });
+    }
+    currentPage = 1;
+    renderTable();
+  });
+});
+
+// ═══ SORTING ═══
+function sortTable(field) {
+  if (sortField === field) {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortField = field;
+    sortDir = 'asc';
+  }
+  // Update header arrows
+  document.querySelectorAll('.data-table th.sortable').forEach(th => {
+    th.classList.remove('asc', 'desc');
+  });
+  currentPage = 1;
+  renderTable();
+}
+
+// ═══ SELECT MODE ═══
+function toggleSelectMode() {
+  selectMode = !selectMode;
+  renderTable();
+}
+
+function toggleSelectAll(cb) {
+  document.querySelectorAll('#taskTable tbody input[type="checkbox"]').forEach(c => {
+    c.checked = cb.checked;
+    c.closest('tr').classList.toggle('selected', cb.checked);
+  });
+}
+
+document.getElementById('tableBody').addEventListener('change', e => {
+  if (e.target.type === 'checkbox') {
+    e.target.closest('tr').classList.toggle('selected', e.target.checked);
+  }
+});
+
+// ═══ PAGINATION ═══
+document.getElementById('pageSize').addEventListener('change', function() {
+  currentPage = 1;
+  renderTable();
+});
+
+// ═══ EXPORT ═══
+function exportTaskList() {
+  const tasks = getFilteredTasks();
+  const csv = ['任务编号,关联合同,任务类型,任务说明,优先级,负责人,截止日期,状态'].concat(
+    tasks.map(t => `${t.id},${t.contract},${t.typeLabel},"${t.title} ${t.desc}",${t.priorityLabel},${t.assignee},${t.dueDate},${t.statusLabel}`)
+  ).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = '任务列表.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ═══ INIT ═══
+renderTable();
+</script>
+
+</body>
+</html>

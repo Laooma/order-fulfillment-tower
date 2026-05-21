@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920">
+<title>订单履约控制塔 — 历史分析</title>
+<style>
+/* ── Design System ── */
+:root {
+  --bg:      oklch(99% 0.002 240);
+  --surface: oklch(100% 0 0);
+  --fg:      oklch(18% 0.012 250);
+  --muted:   oklch(54% 0.012 250);
+  --border:  oklch(92% 0.005 250);
+  --accent:  oklch(58% 0.18 255);
+  --accent-bg: oklch(95% 0.04 255);
+
+  --success:  oklch(55% 0.16 145);
+  --success-bg: oklch(96% 0.04 145);
+  --warning:  oklch(65% 0.16 75);
+  --warning-bg: oklch(97% 0.04 80);
+  --danger:   oklch(58% 0.20 25);
+  --danger-bg: oklch(97% 0.04 25);
+  --neutral-bg: oklch(95% 0.005 250);
+
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  --nav-h: 48px;
+  --radius: 6px;
+  --radius-sm: 4px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Top Navigation ── */
+.topnav {
+  height: var(--nav-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px 0 0;
+  flex-shrink: 0;
+  z-index: 100;
+}
+.topnav-logo {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; height: 100%;
+  border-right: 1px solid var(--border);
+  font-size: 14px; font-weight: 600; color: var(--fg);
+  letter-spacing: -0.02em; white-space: nowrap; min-width: 180px;
+}
+.topnav-logo-icon {
+  width: 28px; height: 28px; background: var(--accent);
+  border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.topnav-logo-icon svg { fill: #fff; }
+.topnav-tabs { display: flex; align-items: stretch; height: 100%; flex: 1; }
+.topnav-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 16px; height: 100%; font-size: 13px; color: var(--muted);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  transition: color 120ms, border-color 120ms;
+  white-space: nowrap; user-select: none; text-decoration: none;
+}
+.topnav-tab:hover { color: var(--fg); }
+.topnav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.topnav-tab svg { opacity: 0.7; flex-shrink: 0; }
+.topnav-tab.active svg { opacity: 1; }
+.topnav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.sub-nav {
+  height: 36px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.sub-nav-tab {
+  padding: 0 16px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+  transition: color 120ms, border-color 120ms;
+}
+.sub-nav-tab:hover { color: var(--fg); }
+.sub-nav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.topnav-user {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px 4px 4px; border-radius: var(--radius);
+  cursor: pointer; transition: background 120ms;
+}
+.topnav-user:hover { background: var(--bg); }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; flex-shrink: 0;
+}
+.topnav-username { font-size: 13px; font-weight: 500; color: var(--fg); }
+.topnav-tag {
+  font-size: 11px; color: var(--muted); background: var(--neutral-bg);
+  padding: 1px 6px; border-radius: 3px; font-family: var(--font-mono);
+}
+
+/* ── Main Layout ── */
+.main-layout { display: flex; flex: 1; overflow: hidden; }
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── Filter Panel ── */
+.filter-panel {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 10px 16px; flex-shrink: 0;
+}
+.filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.filter-row + .filter-row { margin-top: 8px; }
+.filter-group { display: flex; align-items: center; gap: 6px; flex: 1; flex-wrap: nowrap; }
+.filter-item { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.filter-item-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.filter-select, .filter-input {
+  flex: 1; min-width: 0; height: 28px; padding: 0 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 12px; font-family: var(--font-body);
+  color: var(--fg); appearance: none; -webkit-appearance: none;
+  transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23a0aec0'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px;
+}
+.filter-input { background-image: none; padding-right: 8px; }
+.filter-select:focus, .filter-input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px oklch(58% 0.18 255 / 0.12);
+}
+.filter-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+/* ── Buttons ── */
+.btn {
+  height: 28px; padding: 0 12px; border-radius: var(--radius-sm);
+  font-size: 12px; font-family: var(--font-body); font-weight: 500;
+  cursor: pointer; border: none;
+  transition: background 120ms ease-out;
+  display: flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.btn-primary { background: var(--fg); color: #fff; }
+.btn-primary:hover { background: oklch(28% 0.012 250); }
+.btn-outline { background: var(--surface); color: var(--fg); border: 1px solid var(--border); }
+.btn-outline:hover { background: var(--bg); }
+.btn-ghost { background: transparent; color: var(--muted); border: 1px solid transparent; }
+.btn-ghost:hover { background: var(--bg); color: var(--fg); }
+
+/* ── Table Toolbar ── */
+.table-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.toolbar-left { display: flex; align-items: center; gap: 8px; }
+.toolbar-right { display: flex; align-items: center; gap: 6px; }
+.total-count { font-size: 12px; color: var(--muted); }
+.total-count strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+/* ── Data Table ── */
+.table-wrapper { flex: 1; overflow: auto; }
+.data-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.data-table thead tr {
+  background: oklch(97% 0.003 250); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+.data-table th {
+  padding: 8px 10px; text-align: left; font-weight: 600; font-size: 11px;
+  color: var(--muted); white-space: nowrap; border-right: 1px solid var(--border);
+  letter-spacing: 0.01em; user-select: none;
+}
+.data-table th:last-child { border-right: none; }
+.data-table th.sortable { cursor: pointer; transition: color 120ms; }
+.data-table th.sortable:hover { color: var(--fg); }
+.data-table td {
+  padding: 7px 10px; border-bottom: 1px solid oklch(95% 0.003 250);
+  border-right: 1px solid oklch(95% 0.003 250);
+  vertical-align: middle; color: var(--fg);
+}
+.data-table td:last-child { border-right: none; }
+.data-table tbody tr { transition: background 80ms ease-out; }
+.data-table tbody tr:hover { background: oklch(98% 0.003 250); }
+.data-table tbody tr.selected { background: var(--accent-bg); }
+
+/* ── Badges ── */
+.badge-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 10px;
+  font-size: 11px; font-weight: 500; white-space: nowrap;
+}
+.badge-success { background: var(--success-bg); color: var(--success); }
+.badge-warning { background: var(--warning-bg); color: var(--warning); }
+.badge-danger  { background: var(--danger-bg);  color: var(--danger); }
+.badge-neutral { background: var(--neutral-bg); color: var(--muted); }
+.badge-info    { background: var(--accent-bg);  color: var(--accent); }
+
+/* ── Task ID Link ── */
+.task-id {
+  font-family: var(--font-mono); font-size: 12px; color: var(--accent);
+  cursor: pointer; text-decoration: none; font-weight: 500;
+}
+.task-id:hover { text-decoration: underline; }
+
+/* ── Description cell ── */
+.desc-cell {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Action Buttons ── */
+.action-btns { display: flex; align-items: center; gap: 4px; }
+.action-btn {
+  width: 24px; height: 24px; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--muted); cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+  transition: all 120ms ease-out; padding: 0;
+}
+.action-btn:hover { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+
+/* ── Sortable headers ── */
+.data-table th.sortable { cursor: pointer; position: relative; padding-right: 18px; }
+.data-table th.sortable::after {
+  content: '↕'; position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  font-size: 10px; color: var(--border); font-family: var(--font-mono);
+}
+.data-table th.sortable.asc::after { content: '↑'; color: var(--accent); }
+.data-table th.sortable.desc::after { content: '↓'; color: var(--accent); }
+
+/* ── Agent icon ── */
+.agent-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 4px;
+  font-size: 10px; font-weight: 700; color: #fff; margin-right: 4px;
+}
+.agent-purple { background: #7c3aed; }
+.agent-green  { background: #059669; }
+.agent-blue   { background: #2563eb; }
+.agent-orange { background: #ea580c; }
+
+/* ── Stats View ── */
+.stats-view { display: none; padding: 16px; overflow: auto; }
+.stats-view.active { display: block; }
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 12px;
+  text-align: center;
+  transition: box-shadow 120ms;
+}
+.stat-card:hover { box-shadow: 0 2px 8px oklch(0% 0 0 / 0.06); }
+.stat-card-value {
+  font-size: 28px; font-weight: 600; color: var(--fg);
+  font-family: var(--font-mono); line-height: 1;
+  margin-bottom: 6px;
+}
+.stat-card-label { font-size: 12px; color: var(--muted); }
+.stat-card-bar {
+  height: 3px; border-radius: 2px; margin-top: 10px;
+  background: var(--border); overflow: hidden;
+}
+.stat-card-bar-fill { height: 100%; border-radius: 2px; }
+
+.stats-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.stats-section-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px; font-weight: 600; color: var(--fg);
+  display: flex; align-items: center; gap: 6px;
+}
+.stats-section-body { padding: 12px 14px; }
+
+.stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.stat-distribution { display: flex; flex-direction: column; gap: 8px; }
+.stat-bar-item { display: flex; align-items: center; gap: 8px; }
+.stat-bar-label { width: 80px; font-size: 12px; color: var(--fg); white-space: nowrap; }
+.stat-bar-track {
+  flex: 1; height: 18px; background: var(--bg); border-radius: 3px;
+  overflow: hidden; position: relative;
+}
+.stat-bar-fill {
+  height: 100%; border-radius: 3px;
+  transition: width 300ms ease-out;
+}
+.stat-bar-count {
+  width: 36px; text-align: right;
+  font-size: 12px; font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+/* ── Pagination ── */
+.pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px; background: var(--surface);
+  border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.pagination-info { font-size: 12px; color: var(--muted); }
+.pagination-controls { display: flex; align-items: center; gap: 4px; }
+.page-btn {
+  width: 28px; height: 28px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface);
+  font-size: 12px; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 120ms; font-family: var(--font-mono);
+}
+.page-btn:hover { border-color: var(--accent); color: var(--accent); }
+.page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.page-btn:disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--border); color: var(--muted); }
+.page-size-select {
+  height: 28px; padding: 0 20px 0 8px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 12px; font-family: var(--font-body);
+  color: var(--fg); background: var(--surface); appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23a0aec0'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 6px center; cursor: pointer;
+}
+
+input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: oklch(82% 0.008 250); }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-logo">
+    <div class="topnav-logo-icon">
+      <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2h4v4H2zM8 2h4v4H8zM2 8h4v4H2zM8 8h4v4H8z" opacity="0.9" fill="#fff"/></svg>
+    </div>
+    订单履约控制塔
+  </div>
+  <div class="topnav-tabs">
+    <a class="topnav-tab" href="index.html">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M7 1L13 5v8H9V9H5v4H1V5L7 1z"/></svg>首页
+    </a>
+    <a class="topnav-tab" href="analysis-result.html">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M1 1h5v5H1zM8 1h5v5H8zM1 8h5v5H1zM8 8h5v5H8z"/></svg>开始工作
+    </a>
+    <a class="topnav-tab active" href="history-analysis.html">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M2 2h10v2H2zM2 6h8v2H2zM2 10h6v2H2z"/></svg>历史分析
+    </a>
+    <a class="topnav-tab" href="analysis-result.html">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M5 1h4v3l1 1h3v8H1V1h4zm2 5a2 2 0 100 4 2 2 0 000-4z"/></svg>
+      任务列表<span style="background:var(--accent-bg);color:var(--accent);font-size:10px;padding:1px 5px;border-radius:3px;margin-left:2px;font-family:var(--font-mono);">42</span>
+    </a>
+    <a class="topnav-tab" href="#">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M7 1a2 2 0 110 4 2 2 0 010-4zM2 6h10v1a5 5 0 01-10 0V6zM1 13h12v1H1z"/></svg>系统设置
+    </a>
+  </div>
+  <div class="topnav-right">
+    <div class="topnav-user">
+      <div class="avatar">Hi</div>
+      <span class="topnav-username">Hi·金星米</span>
+      <span class="topnav-tag">运营</span>
+    </div>
+  </div>
+</nav>
+
+<div class="sub-nav">
+  <a class="sub-nav-tab active" href="#" data-view="list" onclick="switchView('list');return false;">分析任务列表</a>
+  <a class="sub-nav-tab" href="#" data-view="stats" onclick="switchView('stats');return false;">分析任务统计</a>
+</div>
+
+<div class="main-layout">
+  <div class="content">
+
+    <!-- List View -->
+    <div class="list-view" id="listView">
+
+      <!-- Filter Panel -->
+      <div class="filter-panel">
+        <div class="filter-row">
+          <div class="filter-group">
+            <div class="filter-item" style="flex:1.2;">
+              <span class="filter-item-label">分析任务编号</span>
+              <input class="filter-input" type="text" id="filterTaskId" placeholder="请输入">
+            </div>
+            <div class="filter-item">
+              <span class="filter-item-label">任务类型</span>
+              <select class="filter-select" id="filterTaskType">
+                <option value="">—请选择—</option>
+                <option>agent任务</option>
+                <option>手工任务</option>
+                <option>决策任务</option>
+              </select>
+            </div>
+            <div class="filter-item">
+              <span class="filter-item-label">发起时间</span>
+              <select class="filter-select" id="filterTimeRange">
+                <option value="">—请选择—</option>
+                <option value="today">今天</option>
+                <option value="week">近7天</option>
+                <option value="month">近30天</option>
+              </select>
+            </div>
+            <div class="filter-item">
+              <span class="filter-item-label">处理状态</span>
+              <select class="filter-select" id="filterStatus">
+                <option value="">—请选择—</option>
+                <option>已完成</option>
+                <option>处理中</option>
+                <option>待处理</option>
+                <option>审批中</option>
+              </select>
+            </div>
+            <div class="filter-item" style="flex:1.2;">
+              <span class="filter-item-label">关联销售合同编号</span>
+              <input class="filter-input" type="text" id="filterContractId" placeholder="请输入">
+            </div>
+          </div>
+          <div class="filter-actions">
+            <button class="btn btn-ghost" id="resetBtn">重置</button>
+            <button class="btn btn-primary" id="searchBtn">搜索</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table Toolbar -->
+      <div class="table-toolbar">
+        <div class="toolbar-left">
+          <span class="total-count">共 <strong id="totalCount">0</strong> 条分析任务</span>
+          <div style="width:1px; height:14px; background:var(--border);"></div>
+          <button class="btn btn-ghost" style="height:26px; font-size:11px;" id="batchExportBtn">批量导出</button>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-outline" style="height:26px; font-size:11px;">筛选</button>
+          <button class="btn btn-outline" style="height:26px; font-size:11px;">排序</button>
+        </div>
+      </div>
+
+      <!-- Data Table -->
+      <div class="table-wrapper">
+        <table class="data-table" id="dataTable">
+          <thead>
+            <tr>
+              <th style="width:36px; padding:8px;"><input type="checkbox" id="selectAll"></th>
+              <th style="width:36px;">#</th>
+              <th class="sortable" data-sort="id" style="width:130px;">分析任务编号</th>
+              <th class="sortable" data-sort="title" style="width:120px;">分析主题</th>
+              <th class="sortable" data-sort="taskType" style="width:80px;">任务类型</th>
+              <th style="width:200px;">详细说明</th>
+              <th style="width:100px;">发起Agent</th>
+              <th style="width:70px;">发起人</th>
+              <th class="sortable" data-sort="status" style="width:80px;">处理状态</th>
+              <th class="sortable" data-sort="createdAt" style="width:110px;">发起时间</th>
+              <th style="width:110px;">处理完成时间</th>
+              <th style="width:130px;">关联销售合同编号</th>
+              <th style="width:90px;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination">
+        <div class="pagination-info">
+          显示 <span style="font-family:var(--font-mono);" id="pageRange">1–10</span> 条，共 <span style="font-family:var(--font-mono); font-weight:600;" id="pageTotal">0</span> 条
+        </div>
+        <div class="pagination-controls" id="paginationControls">
+          <button class="page-btn" id="prevBtn">‹</button>
+          <button class="page-btn active" data-page="1">1</button>
+          <button class="page-btn" id="nextBtn">›</button>
+          <div style="width:8px;"></div>
+          <select class="page-size-select" id="pageSizeSelect"><option>10/页</option><option>25/页</option><option>50/页</option></select>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Stats View -->
+    <div class="stats-view" id="statsView">
+      <!-- Overview Cards -->
+      <div class="stats-grid" id="statsOverview"></div>
+
+      <!-- Distribution Charts -->
+      <div class="stats-row">
+        <div class="stats-section">
+          <div class="stats-section-header">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" style="opacity:0.7;"><path d="M1 1h5v5H1zM8 1h5v5H8zM1 8h5v5H1zM8 8h5v5H8z"/></svg>
+            按任务类型分布
+          </div>
+          <div class="stats-section-body">
+            <div class="stat-distribution" id="typeDistribution"></div>
+          </div>
+        </div>
+        <div class="stats-section">
+          <div class="stats-section-header">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" style="opacity:0.7;"><path d="M2 2h10v2H2zM2 6h8v2H2zM2 10h6v2H2z"/></svg>
+            按处理状态分布
+          </div>
+          <div class="stats-section-body">
+            <div class="stat-distribution" id="statusDistribution"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stats-section">
+          <div class="stats-section-header">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" style="opacity:0.7;"><path d="M7 1a2 2 0 110 4 2 2 0 010-4zM2 6h10v1a5 5 0 01-10 0V6zM1 13h12v1H1z"/></svg>
+            按发起Agent分布
+          </div>
+          <div class="stats-section-body">
+            <div class="stat-distribution" id="agentDistribution"></div>
+          </div>
+        </div>
+        <div class="stats-section">
+          <div class="stats-section-header">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" style="opacity:0.7;"><path d="M1 1h12v3H1zm0 5h9v3H1zm0 5h6v3H1z"/></svg>
+            最近7天趋势
+          </div>
+          <div class="stats-section-body">
+            <div class="stat-distribution" id="trendDistribution"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Default Demo Data ──
+const defaultTasks = [
+  // ── 2026/5/13 ──
+  { id: 'T20260513001', title: '华东仓库存自动核验', taskType: 'agent任务', description: '查询并统计华东区各仓库SKU库存及收占比例', agent: '系统Agent', initiator: '王经理', status: '已完成', createdAt: '2026/5/13 08:01', completedAt: '2026/5/13 08:01', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260513002', title: '智能异常单键执行', taskType: 'agent任务', description: '根据异常规则对订单执行自动干预或消息推送', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/13 08:05', completedAt: '2026/5/13 08:05', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260513003', title: '承运商自动优选', taskType: 'agent任务', description: '基于时效和成本模型自动匹配最优承运商并推送', agent: '系统Agent', initiator: '张总监', status: '处理中', createdAt: '2026/5/13 08:10', completedAt: '', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260513004', title: '信用额度自动核验', taskType: 'agent任务', description: '核验客户当前信用额度是否满足发货条件', agent: '系统Agent', initiator: '财务总监', status: '已完成', createdAt: '2026/5/13 08:15', completedAt: '2026/5/13 08:15', relatedContracts: ['SCJD202409101'] },
+  { id: 'T20260513005', title: '电子面单自动生成', taskType: 'agent任务', description: '调用快递公司接口自动生成电子面单并推送', agent: '系统Agent', initiator: '李主管', status: '待处理', createdAt: '2026/5/13 08:20', completedAt: '', relatedContracts: ['SCJD202405120'] },
+  { id: 'T20260513006', title: '发货通知单触发', taskType: 'agent任务', description: '发货完成后自动触发客户通知节点并推送', agent: '系统Agent', initiator: '客服经理', status: '已完成', createdAt: '2026/5/13 08:25', completedAt: '2026/5/13 08:25', relatedContracts: ['SCJD202406001'] },
+  { id: 'T20260513007', title: '物流轨迹实时触车', taskType: 'agent任务', description: '实时抓取各承运商轨迹数据并更新节点', agent: '系统Agent', initiator: '李主管', status: '处理中', createdAt: '2026/5/13 08:30', completedAt: '', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260513008', title: '预计送达时间计算', taskType: 'agent任务', description: '根据物流轨迹及历史数据预测送达时间', agent: '系统Agent', initiator: '张总监', status: '已完成', createdAt: '2026/5/13 08:35', completedAt: '2026/5/13 08:35', relatedContracts: ['SCJD202408102'] },
+  { id: 'T20260513009', title: '签收自动确认', taskType: 'agent任务', description: '客户确认签收后，系统自动更新订单状态', agent: '系统Agent', initiator: '王经理', status: '待处理', createdAt: '2026/5/13 08:40', completedAt: '', relatedContracts: ['SCJD202405090'] },
+  { id: 'T20260513010', title: '仓库库存自动预警', taskType: 'agent任务', description: '检测到仓库库存占用量超过90%触发预警', agent: '系统Agent', initiator: '仓储部经理', status: '待处理', createdAt: '2026/5/13 08:45', completedAt: '', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260513011', title: '跨仓调拨决策审批', taskType: '决策任务', description: '本地仓缺货，需决策是否启动跨仓调拨', agent: '仓储部经理', initiator: '张总监', status: '审批中', createdAt: '2026/5/13 09:00', completedAt: '', relatedContracts: ['SCJD202404001'] },
+  { id: 'T20260513012', title: '大促期间运力储备评估', taskType: '决策任务', description: '618大促前评估各区域运力储备是否充足', agent: '运营总监', initiator: '张总监', status: '已完成', createdAt: '2026/5/13 09:15', completedAt: '2026/5/13 09:45', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260513013', title: '客户退货原因分类统计', taskType: 'agent任务', description: '自动抓取退货单数据并按原因分类统计', agent: '系统Agent', initiator: '客服经理', status: '已完成', createdAt: '2026/5/13 09:30', completedAt: '2026/5/13 09:32', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260513014', title: '供应商交期延迟预警', taskType: 'agent任务', description: '监控供应商交货进度，延迟超3天自动预警', agent: '系统Agent', initiator: '采购经理', status: '处理中', createdAt: '2026/5/13 09:45', completedAt: '', relatedContracts: ['SCJD202402001'] },
+  { id: 'T20260513015', title: '异常拒收单人工处理', taskType: '手工任务', description: '客户拒收订单需人工确认原因并重新安排', agent: '运营专员', initiator: '客服经理', status: '审批中', createdAt: '2026/5/13 10:00', completedAt: '', relatedContracts: ['SCJD202406001'] },
+  { id: 'T20260513016', title: '冷链运输温控合规检查', taskType: 'agent任务', description: '检查冷链订单全程温控数据是否合规', agent: '系统Agent', initiator: '质控经理', status: '已完成', createdAt: '2026/5/13 10:15', completedAt: '2026/5/13 10:18', relatedContracts: ['SCJD202410005'] },
+  { id: 'T20260513017', title: '月度KPI数据汇总', taskType: 'agent任务', description: '汇总各区域履约KPI指标生成报表', agent: '系统Agent', initiator: '王经理', status: '已完成', createdAt: '2026/5/13 10:30', completedAt: '2026/5/13 10:35', relatedContracts: ['SCJD202411001','SCJD202411002','SCJD202409101'] },
+  { id: 'T20260513018', title: '退货入库单自动创建', taskType: 'agent任务', description: '退货物流签收后自动生成入库单并通知仓库', agent: '系统Agent', initiator: '仓储部经理', status: '待处理', createdAt: '2026/5/13 10:45', completedAt: '', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260513019', title: '高价值订单保价审批', taskType: '决策任务', description: '订单金额超50万需审批是否购买物流保价', agent: '财务总监', initiator: '财务总监', status: '审批中', createdAt: '2026/5/13 11:00', completedAt: '', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260513020', title: '华东区配送时效日报', taskType: 'agent任务', description: '生成华东区昨日配送时效分析日报', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/13 11:15', completedAt: '2026/5/13 11:20', relatedContracts: ['SCJD202411001'] },
+
+  // ── 2026/5/12 ──
+  { id: 'T20260512001', title: 'Q1全量履约数据导出', taskType: 'agent任务', description: '导出第一季度全部订单履约数据用于复盘', agent: '系统Agent', initiator: 'Hi·金星米', status: '已完成', createdAt: '2026/5/12 14:20', completedAt: '2026/5/12 14:25', relatedContracts: ['SCJD202411001','SCJD202411002'] },
+  { id: 'T20260512002', title: '异常订单人工复核', taskType: '手工任务', description: '对系统标记的异常订单进行人工复核确认', agent: '运营专员', initiator: 'Hi·金星米', status: '已完成', createdAt: '2026/5/12 10:00', completedAt: '2026/5/12 11:30', relatedContracts: ['SCJD202411003'] },
+  { id: 'T20260512003', title: '华南仓库容扩容评估', taskType: '决策任务', description: '评估华南仓是否需要扩容及扩容方案', agent: '仓储部经理', initiator: '张总监', status: '已驳回', createdAt: '2026/5/12 09:30', completedAt: '2026/5/12 10:00', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260512004', title: '预售订单备货提醒', taskType: 'agent任务', description: '预售订单临近发货日自动提醒仓库备货', agent: '系统Agent', initiator: '仓储部经理', status: '已完成', createdAt: '2026/5/12 08:00', completedAt: '2026/5/12 08:05', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260512005', title: '快递员派件异常汇总', taskType: 'agent任务', description: '汇总昨日快递员派件异常情况及原因', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/12 07:30', completedAt: '2026/5/12 07:35', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260512006', title: '大客户专属通道申请', taskType: '决策任务', description: '申请为A级大客户开通专属发货通道', agent: '客服经理', initiator: '王经理', status: '已完成', createdAt: '2026/5/12 15:00', completedAt: '2026/5/12 15:30', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260512007', title: '破损件理赔资料整理', taskType: '手工任务', description: '整理破损件照片及物流凭证提交理赔', agent: '运营专员', initiator: '客服经理', status: '处理中', createdAt: '2026/5/12 13:00', completedAt: '', relatedContracts: ['SCJD202406001'] },
+  { id: 'T20260512008', title: '新承运商准入资质审核', taskType: 'agent任务', description: '自动抓取新承运商资质信息并生成审核报告', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/5/12 11:00', completedAt: '2026/5/12 11:15', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260512009', title: '同城即时配运力调度', taskType: 'agent任务', description: '根据订单密度动态调度同城即时配运力', agent: '系统Agent', initiator: '李主管', status: '处理中', createdAt: '2026/5/12 16:00', completedAt: '', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260512010', title: '跨境保税仓库存盘点', taskType: 'agent任务', description: '触发跨境保税仓库存盘点并核对差异', agent: '系统Agent', initiator: '仓储部经理', status: '待处理', createdAt: '2026/5/12 14:00', completedAt: '', relatedContracts: ['SCJD202410005'] },
+
+  // ── 2026/5/11 ──
+  { id: 'T20260511001', title: '跨境电商订单风险评估', taskType: 'agent任务', description: '对跨境订单进行海关合规及物流风险评估', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/5/11 09:15', completedAt: '2026/5/11 09:20', relatedContracts: ['SCJD202410005'] },
+  { id: 'T20260511002', title: '华东区仓库巡检报告', taskType: 'agent任务', description: '自动生成华东区仓库5月巡检报告', agent: '系统Agent', initiator: '仓储部经理', status: '已完成', createdAt: '2026/5/11 08:00', completedAt: '2026/5/11 08:10', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260511003', title: '订单拆分策略优化', taskType: '决策任务', description: '评估多仓发货订单拆分策略是否需要优化', agent: '运营总监', initiator: '张总监', status: '已完成', createdAt: '2026/5/11 10:30', completedAt: '2026/5/11 11:00', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260511004', title: '滞销品库存清理方案', taskType: 'agent任务', description: '分析滞销品库存并生成清理建议方案', agent: '系统Agent', initiator: '采购经理', status: '已驳回', createdAt: '2026/5/11 14:00', completedAt: '2026/5/11 14:30', relatedContracts: ['SCJD202402001'] },
+  { id: 'T20260511005', title: '客户满意度回访生成', taskType: 'agent任务', description: '自动筛选签收3日订单生成满意度回访名单', agent: '系统Agent', initiator: '客服经理', status: '已完成', createdAt: '2026/5/11 15:00', completedAt: '2026/5/11 15:05', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260511006', title: '危险品运输资质校验', taskType: 'agent任务', description: '校验涉及危险品订单的承运商资质', agent: '系统Agent', initiator: '风控经理', status: '处理中', createdAt: '2026/5/11 11:00', completedAt: '', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260511007', title: '大促预案库存预占', taskType: 'agent任务', description: '618大促预售订单提前预占库存', agent: '系统Agent', initiator: '仓储部经理', status: '已完成', createdAt: '2026/5/11 09:00', completedAt: '2026/5/11 09:10', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260511008', title: '快递费对账差异分析', taskType: 'agent任务', description: '对比系统计费与快递账单，找出差异订单', agent: '系统Agent', initiator: '财务总监', status: '已完成', createdAt: '2026/5/11 16:00', completedAt: '2026/5/11 16:20', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260511009', title: '紧急调拨单审批', taskType: '决策任务', description: '因暴雨导致华南仓无法发货，需紧急调拨', agent: '仓储部经理', initiator: '张总监', status: '已完成', createdAt: '2026/5/11 07:00', completedAt: '2026/5/11 07:15', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260511010', title: '物流投诉工单归类', taskType: '手工任务', description: '对昨日物流投诉工单进行归类和初步处理', agent: '运营专员', initiator: '客服经理', status: '已完成', createdAt: '2026/5/11 13:00', completedAt: '2026/5/11 15:00', relatedContracts: ['SCJD202407002'] },
+
+  // ── 2026/5/10 ──
+  { id: 'T20260510001', title: '华北仓发货延迟分析', taskType: 'agent任务', description: '分析华北仓昨日发货延迟原因及影响订单', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/10 08:00', completedAt: '2026/5/10 08:15', relatedContracts: ['SCJD202405120'] },
+  { id: 'T20260510002', title: '生鲜订单时效监控', taskType: 'agent任务', description: '监控生鲜订单从出库到签收全链路时效', agent: '系统Agent', initiator: '质控经理', status: '已完成', createdAt: '2026/5/10 09:00', completedAt: '2026/5/10 09:05', relatedContracts: ['SCJD202410005'] },
+  { id: 'T20260510003', title: '仓储费结算数据准备', taskType: 'agent任务', description: '汇总各仓库5月仓储费结算基础数据', agent: '系统Agent', initiator: '财务总监', status: '处理中', createdAt: '2026/5/10 14:00', completedAt: '', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260510004', title: '客户投诉升级处理', taskType: '手工任务', description: '处理昨日升级至主管的客户投诉案件', agent: '客服主管', initiator: '客服经理', status: '待处理', createdAt: '2026/5/10 10:00', completedAt: '', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260510005', title: '尾程派送范围变更', taskType: '决策任务', description: '某县撤县设区，需更新尾程派送范围', agent: '运营总监', initiator: '李主管', status: '已完成', createdAt: '2026/5/10 11:00', completedAt: '2026/5/10 11:30', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260510006', title: '逆向物流成本核算', taskType: 'agent任务', description: '核算上月退货、换货产生的逆向物流成本', agent: '系统Agent', initiator: '财务总监', status: '已完成', createdAt: '2026/5/10 15:00', completedAt: '2026/5/10 15:20', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260510007', title: '包裹超重费用核对', taskType: 'agent任务', description: '核对系统自动计算的超重费用是否准确', agent: '系统Agent', initiator: '财务总监', status: '已驳回', createdAt: '2026/5/10 16:00', completedAt: '2026/5/10 16:30', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260510008', title: '仓库5S检查评分', taskType: '手工任务', description: '对各仓库进行5S检查并评分记录', agent: '仓储部经理', initiator: '质控经理', status: '已完成', createdAt: '2026/5/10 13:00', completedAt: '2026/5/10 17:00', relatedContracts: ['SCJD202403001'] },
+
+  // ── 2026/5/9 ──
+  { id: 'T20260509001', title: '物流路由智能优化', taskType: 'agent任务', description: '基于实时路况优化在途订单配送路由', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/9 08:00', completedAt: '2026/5/9 08:10', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260509002', title: 'A级客户专属报表', taskType: 'agent任务', description: '为A级客户生成定制化履约分析报表', agent: '系统Agent', initiator: '王经理', status: '已完成', createdAt: '2026/5/9 09:00', completedAt: '2026/5/9 09:15', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260509003', title: '换货单自动审核', taskType: 'agent任务', description: '符合规则的换货申请自动审核通过', agent: '系统Agent', initiator: '客服经理', status: '处理中', createdAt: '2026/5/9 10:00', completedAt: '', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260509004', title: '快递网点异常预警', taskType: 'agent任务', description: '监控各快递网点揽收异常并预警', agent: '系统Agent', initiator: '李主管', status: '待处理', createdAt: '2026/5/9 11:00', completedAt: '', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260509005', title: '合同到期续约提醒', taskType: 'agent任务', description: '扫描即将到期的承运商合同并提醒续约', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/5/9 14:00', completedAt: '2026/5/9 14:05', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260509006', title: '新品上架物流方案', taskType: '决策任务', description: '新品上市需确定首发物流方案', agent: '运营总监', initiator: '采购经理', status: '已完成', createdAt: '2026/5/9 15:00', completedAt: '2026/5/9 15:45', relatedContracts: ['SCJD202402001'] },
+  { id: 'T20260509007', title: '仓库温湿度异常处理', taskType: '手工任务', description: '处理仓库温湿度传感器异常报警', agent: '仓储主管', initiator: '仓储部经理', status: '已完成', createdAt: '2026/5/9 07:00', completedAt: '2026/5/9 08:30', relatedContracts: ['SCJD202403001'] },
+
+  // ── 2026/5/8 ──
+  { id: 'T20260508001', title: '全国履约热力图生成', taskType: 'agent任务', description: '生成全国各区域履约时效热力图', agent: '系统Agent', initiator: '王经理', status: '已完成', createdAt: '2026/5/8 08:00', completedAt: '2026/5/8 08:30', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260508002', title: '快递面单批量补打', taskType: '手工任务', description: '为快递面单损坏的订单批量补打', agent: '运营专员', initiator: '李主管', status: '已完成', createdAt: '2026/5/8 10:00', completedAt: '2026/5/8 11:00', relatedContracts: ['SCJD202405120'] },
+  { id: 'T20260508003', title: '进口商品报关单校验', taskType: 'agent任务', description: '自动校验进口商品报关单信息完整性', agent: '系统Agent', initiator: '风控经理', status: '已驳回', createdAt: '2026/5/8 09:00', completedAt: '2026/5/8 09:30', relatedContracts: ['SCJD202410005'] },
+  { id: 'T20260508004', title: '仓间调拨在途追踪', taskType: 'agent任务', description: '追踪仓间调拨货物在途状态', agent: '系统Agent', initiator: '仓储部经理', status: '处理中', createdAt: '2026/5/8 14:00', completedAt: '', relatedContracts: ['SCJD202404001'] },
+  { id: 'T20260508005', title: '快递员绩效考核汇总', taskType: 'agent任务', description: '汇总上月快递员绩效考核数据', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/8 15:00', completedAt: '2026/5/8 15:20', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260508006', title: '大客户账期调整申请', taskType: '决策任务', description: 'A级大客户申请延长账期至60天', agent: '财务总监', initiator: '财务总监', status: '审批中', createdAt: '2026/5/8 11:00', completedAt: '', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260508007', title: '物流保险批量投保', taskType: 'agent任务', description: '为高价值订单批量购买物流保险', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/5/8 16:00', completedAt: '2026/5/8 16:10', relatedContracts: ['SCJD202411001'] },
+
+  // ── 2026/5/7 ──
+  { id: 'T20260507001', title: '华东区发货日报生成', taskType: 'agent任务', description: '生成华东区5月6日发货日报', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/7 08:00', completedAt: '2026/5/7 08:05', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260507002', title: 'B2B大宗订单履约检查', taskType: 'agent任务', description: '检查B2B大宗订单履约进度是否达标', agent: '系统Agent', initiator: '王经理', status: '已完成', createdAt: '2026/5/7 09:00', completedAt: '2026/5/7 09:10', relatedContracts: ['SCJD202409101'] },
+  { id: 'T20260507003', title: '快递滞留件清理', taskType: '手工任务', description: '清理超过3天未签收的滞留快递件', agent: '运营专员', initiator: '客服经理', status: '处理中', createdAt: '2026/5/7 10:00', completedAt: '', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260507004', title: '冷链车辆年检提醒', taskType: 'agent任务', description: '提醒即将到期的冷链车辆年检', agent: '系统Agent', initiator: '质控经理', status: '已完成', createdAt: '2026/5/7 11:00', completedAt: '2026/5/7 11:05', relatedContracts: ['SCJD202410005'] },
+  { id: 'T20260507005', title: '供应商评分更新', taskType: 'agent任务', description: '根据上月履约数据更新供应商评分', agent: '系统Agent', initiator: '采购经理', status: '已完成', createdAt: '2026/5/7 14:00', completedAt: '2026/5/7 14:15', relatedContracts: ['SCJD202402001'] },
+  { id: 'T20260507006', title: '订单合并发货评估', taskType: '决策任务', description: '评估同一客户多订单合并发货的可行性', agent: '运营总监', initiator: '李主管', status: '已完成', createdAt: '2026/5/7 15:00', completedAt: '2026/5/7 15:30', relatedContracts: ['SCJD202411001'] },
+
+  // ── 2026/5/6 ──
+  { id: 'T20260506001', title: '运费模板批量更新', taskType: 'agent任务', description: '根据新价格协议批量更新运费模板', agent: '系统Agent', initiator: '财务总监', status: '已完成', createdAt: '2026/5/6 08:00', completedAt: '2026/5/6 08:10', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260506002', title: '客户黑名单同步', taskType: 'agent任务', description: '同步风控系统客户黑名单至履约系统', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/5/6 09:00', completedAt: '2026/5/6 09:05', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260506003', title: '包装耗材库存预警', taskType: 'agent任务', description: '监控包装耗材库存并预警低库存品种', agent: '系统Agent', initiator: '仓储部经理', status: '待处理', createdAt: '2026/5/6 10:00', completedAt: '', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260506004', title: '节假日值班安排', taskType: '手工任务', description: '安排端午节假期仓库及物流值班人员', agent: '仓储部经理', initiator: '张总监', status: '已完成', createdAt: '2026/5/6 14:00', completedAt: '2026/5/6 15:00', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260506005', title: '跨境退货清关处理', taskType: '手工任务', description: '处理跨境退货的清关及重新入库', agent: '运营专员', initiator: '风控经理', status: '审批中', createdAt: '2026/5/6 11:00', completedAt: '', relatedContracts: ['SCJD202410005'] },
+  { id: 'T20260506006', title: '物流节点自动更新', taskType: 'agent任务', description: '根据承运商回传数据自动更新物流节点', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/5/6 07:30', completedAt: '2026/5/6 07:35', relatedContracts: ['SCJD411001'] },
+
+  // ── 2026/5/5 ──
+  { id: 'T20260505001', title: '仓配一体成本分析', taskType: 'agent任务', description: '分析仓配一体模式下的单均履约成本', agent: '系统Agent', initiator: '财务总监', status: '已完成', createdAt: '2026/5/5 08:00', completedAt: '2026/5/5 08:20', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260505002', title: '快递网点分级调整', taskType: '决策任务', description: '根据服务质量调整快递网点分级', agent: '运营总监', initiator: '李主管', status: '已驳回', createdAt: '2026/5/5 09:00', completedAt: '2026/5/5 09:45', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260505003', title: '预售商品入库提醒', taskType: 'agent任务', description: '提醒预售商品按约定时间入库', agent: '系统Agent', initiator: '仓储部经理', status: '已完成', createdAt: '2026/5/5 10:00', completedAt: '2026/5/5 10:05', relatedContracts: ['SCJD202402001'] },
+  { id: 'T20260505004', title: '物流投诉根因分析', taskType: 'agent任务', description: '分析上月物流投诉根因并生成改进建议', agent: '系统Agent', initiator: '客服经理', status: '已完成', createdAt: '2026/5/5 14:00', completedAt: '2026/5/5 14:30', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260505005', title: '礼品包装服务上线', taskType: '决策任务', description: '评估上线礼品包装增值服务方案', agent: '客服经理', initiator: '王经理', status: '已完成', createdAt: '2026/5/5 11:00', completedAt: '2026/5/5 11:45', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260505006', title: '仓内作业效率监控', taskType: 'agent任务', description: '监控各仓库拣货、打包、复核效率', agent: '系统Agent', initiator: '仓储部经理', status: '处理中', createdAt: '2026/5/5 15:00', completedAt: '', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260505007', title: '运费险自动理赔', taskType: 'agent任务', description: '运费险出险订单自动提交理赔资料', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/5/5 16:00', completedAt: '2026/5/5 16:15', relatedContracts: ['SCJD202407002'] },
+
+  // ── 2026/4/28─30（更早数据） ──
+  { id: 'T20260430001', title: '4月全量履约复盘报告', taskType: 'agent任务', description: '生成4月全量订单履约复盘分析报告', agent: '系统Agent', initiator: '王经理', status: '已完成', createdAt: '2026/4/30 14:00', completedAt: '2026/4/30 14:40', relatedContracts: ['SCJD202411001','SCJD202411002','SCJD202409101'] },
+  { id: 'T20260430002', title: '季度承运商评级', taskType: 'agent任务', description: '根据Q1数据完成承运商季度评级', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/4/30 10:00', completedAt: '2026/4/30 11:00', relatedContracts: ['SCJD202400001'] },
+  { id: 'T20260429001', title: '华东仓WMS系统升级', taskType: '决策任务', description: '审批华东仓WMS系统升级方案及切换时间', agent: '仓储部经理', initiator: '张总监', status: '已完成', createdAt: '2026/4/29 09:00', completedAt: '2026/4/29 10:30', relatedContracts: ['SCJD202403001'] },
+  { id: 'T20260429002', title: '五一假期发货预案', taskType: 'agent任务', description: '制定五一假期发货及值班预案', agent: '系统Agent', initiator: '李主管', status: '已完成', createdAt: '2026/4/29 08:00', completedAt: '2026/4/29 08:30', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260428001', title: '退货质检标准更新', taskType: '决策任务', description: '更新退货商品质检判定标准', agent: '质控经理', initiator: '王经理', status: '已驳回', createdAt: '2026/4/28 14:00', completedAt: '2026/4/28 14:30', relatedContracts: ['SCJD202407002'] },
+  { id: 'T20260428002', title: '快递保价费率调整', taskType: 'agent任务', description: '根据保险公司通知调整快递保价费率', agent: '系统Agent', initiator: '风控经理', status: '已完成', createdAt: '2026/4/28 10:00', completedAt: '2026/4/28 10:10', relatedContracts: ['SCJD202411001'] },
+  { id: 'T20260428003', title: '跨境直邮通道开通', taskType: '决策任务', description: '审批开通日本跨境直邮物流通道', agent: '运营总监', initiator: '采购经理', status: '已完成', createdAt: '2026/4/28 11:00', completedAt: '2026/4/28 12:00', relatedContracts: ['SCJD202410005'] },
+  { id: 'T20260428004', title: '仓库消防演练安排', taskType: '手工任务', description: '组织各仓库进行季度消防安全演练', agent: '仓储主管', initiator: '质控经理', status: '已完成', createdAt: '2026/4/28 09:00', completedAt: '2026/4/28 11:00', relatedContracts: ['SCJD202403001'] },
+];
+
+// ── Data Management ──
+function getTasks() {
+  const stored = localStorage.getItem('analysisTasks');
+  if (stored) {
+    const parsed = JSON.parse(stored);
+    // Merge with defaults, avoid duplicates by id
+    const ids = new Set(parsed.map(t => t.id));
+    const merged = [...parsed, ...defaultTasks.filter(t => !ids.has(t.id))];
+    return merged;
+  }
+  return [...defaultTasks];
+}
+
+let allTasks = getTasks();
+let filteredTasks = [...allTasks];
+let currentPage = 1;
+let pageSize = 10;
+
+// ── Render ──
+const tbody = document.getElementById('tableBody');
+const totalCountEl = document.getElementById('totalCount');
+const pageRangeEl = document.getElementById('pageRange');
+const pageTotalEl = document.getElementById('pageTotal');
+
+function statusBadge(status) {
+  switch (status) {
+    case '已完成': return 'badge-success';
+    case '处理中': return 'badge-info';
+    case '待处理': return 'badge-warning';
+    case '审批中': return 'badge-info';
+    case '已驳回': return 'badge-danger';
+    default: return 'badge-neutral';
+  }
+}
+
+function agentIconClass(agent) {
+  if (agent.includes('系统')) return 'agent-blue';
+  if (agent.includes('运营')) return 'agent-green';
+  if (agent.includes('仓储')) return 'agent-orange';
+  if (agent.includes('风控')) return 'agent-purple';
+  return 'agent-blue';
+}
+
+function agentShort(agent) {
+  if (agent.includes('系统')) return '系';
+  if (agent.includes('运营')) return '运';
+  if (agent.includes('仓储')) return '仓';
+  if (agent.includes('风控')) return '风';
+  return agent.charAt(0);
+}
+
+function renderTable() {
+  tbody.innerHTML = '';
+  const start = (currentPage - 1) * pageSize;
+  const end = Math.min(start + pageSize, filteredTasks.length);
+  const pageItems = filteredTasks.slice(start, end);
+
+  pageItems.forEach((t, i) => {
+    const tr = document.createElement('tr');
+    tr.dataset.taskId = t.id;
+    tr.style.cursor = 'pointer';
+    const globalIndex = start + i + 1;
+    const contracts = Array.isArray(t.relatedContracts) ? t.relatedContracts : [t.relatedContracts];
+    const canRetry = t.status === '待处理' || t.status === '审批中';
+    tr.innerHTML = `
+      <td style="padding:7px;" onclick="event.stopPropagation();"><input type="checkbox"></td>
+      <td style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">${String(globalIndex).padStart(2,'0')}</td>
+      <td><span class="task-id" onclick="event.stopPropagation();"
+        >${t.id}</span></td>
+      <td>${t.title}</td>
+      <td><span class="badge-pill ${t.taskType === 'agent任务' ? 'badge-info' : t.taskType === '决策任务' ? 'badge-warning' : 'badge-neutral'}">${t.taskType}</span></td>
+      <td><span class="desc-cell" title="${t.description}">${t.description}</span></td>
+      <td><span class="agent-icon ${agentIconClass(t.agent)}">${agentShort(t.agent)}</span>${t.agent}</td>
+      <td>${t.initiator}</td>
+      <td><span class="badge-pill ${statusBadge(t.status)}">${t.status}</span></td>
+      <td style="font-size:11px;color:var(--muted);white-space:nowrap;">${t.createdAt}</td>
+      <td style="font-size:11px;color:var(--muted);white-space:nowrap;">${t.completedAt || '—'}</td>
+      <td style="font-family:var(--font-mono);font-size:11px;">${contracts.join(', ')}</td>
+      <td>
+        <div class="action-btns">
+          <button class="action-btn" title="查看详情" onclick="event.stopPropagation();viewTask('${t.id}')">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M7 2c4 0 6 2.5 6 5s-2 5-6 5-6-2.5-6-5 2-5 6-5zm0 2a3 3 0 100 6 3 3 0 000-6z"/></svg>
+          </button>
+          ${canRetry ? `<button class="action-btn" title="重新执行" onclick="event.stopPropagation();retryTask('${t.id}')">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 2a4 4 0 11-.001 8.001A4 4 0 017 3zm3.5 2L10 7l-2.5-1 1 1.5L6 8l1.5 1L6 11l2.5-1.5L8 11l2.5 1v-2.5L13 8l-2.5-1v-2z" opacity="0.8"/></svg>
+          </button>` : ''}
+          <button class="action-btn" title="执行日志" onclick="event.stopPropagation();viewLog('${t.id}')">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor"><path d="M2 3h6v1H2zm0 3h10v1H2zm0 3h8v1H2z"/></svg>
+          </button>
+        </div>
+      </td>
+    `;
+    tr.addEventListener('click', () => viewTask(t.id));
+    tbody.appendChild(tr);
+  });
+
+  totalCountEl.textContent = filteredTasks.length;
+  pageTotalEl.textContent = filteredTasks.length;
+  pageRangeEl.textContent = filteredTasks.length === 0 ? '0–0' : `${start + 1}–${end}`;
+  renderPagination();
+}
+
+function renderPagination() {
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / pageSize));
+  const controls = document.getElementById('paginationControls');
+  let html = `
+    <button class="page-btn" id="prevBtn" ${currentPage === 1 ? 'disabled' : ''}>‹</button>
+  `;
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+      html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
+    } else if (i === currentPage - 2 || i === currentPage + 2) {
+      html += `<span style="color:var(--muted);font-size:11px;padding:0 4px;">…</span>`;
+    }
+  }
+  html += `
+    <button class="page-btn" id="nextBtn" ${currentPage === totalPages ? 'disabled' : ''}>›</button>
+    <div style="width:8px;"></div>
+    <select class="page-size-select" id="pageSizeSelect">
+      <option ${pageSize === 10 ? 'selected' : ''}>10/页</option>
+      <option ${pageSize === 25 ? 'selected' : ''}>25/页</option>
+      <option ${pageSize === 50 ? 'selected' : ''}>50/页</option>
+    </select>
+  `;
+  controls.innerHTML = html;
+
+  // Re-bind events
+  document.getElementById('prevBtn').addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderTable(); } });
+  document.getElementById('nextBtn').addEventListener('click', () => { const total = Math.ceil(filteredTasks.length / pageSize); if (currentPage < total) { currentPage++; renderTable(); } });
+  controls.querySelectorAll('.page-btn[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => { currentPage = parseInt(btn.dataset.page); renderTable(); });
+  });
+  document.getElementById('pageSizeSelect').addEventListener('change', e => {
+    pageSize = parseInt(e.target.value);
+    currentPage = 1;
+    renderTable();
+  });
+}
+
+// ── Filter Logic ──
+function applyFilters() {
+  const taskId = document.getElementById('filterTaskId').value.trim().toLowerCase();
+  const taskType = document.getElementById('filterTaskType').value;
+  const timeRange = document.getElementById('filterTimeRange').value;
+  const status = document.getElementById('filterStatus').value;
+  const contractId = document.getElementById('filterContractId').value.trim().toLowerCase();
+
+  filteredTasks = allTasks.filter(t => {
+    if (taskId && !t.id.toLowerCase().includes(taskId)) return false;
+    if (taskType && t.taskType !== taskType) return false;
+    if (status && t.status !== status) return false;
+    if (contractId) {
+      const contracts = Array.isArray(t.relatedContracts) ? t.relatedContracts : [t.relatedContracts];
+      if (!contracts.some(c => c.toLowerCase().includes(contractId))) return false;
+    }
+    if (timeRange) {
+      const taskDate = new Date(t.createdAt.replace(/\//g, '-'));
+      const now = new Date();
+      const diffDays = (now - taskDate) / (1000 * 60 * 60 * 24);
+      if (timeRange === 'today' && diffDays > 1) return false;
+      if (timeRange === 'week' && diffDays > 7) return false;
+      if (timeRange === 'month' && diffDays > 30) return false;
+    }
+    return true;
+  });
+
+  currentPage = 1;
+  renderTable();
+}
+
+document.getElementById('searchBtn').addEventListener('click', applyFilters);
+document.getElementById('resetBtn').addEventListener('click', () => {
+  document.getElementById('filterTaskId').value = '';
+  document.getElementById('filterTaskType').value = '';
+  document.getElementById('filterTimeRange').value = '';
+  document.getElementById('filterStatus').value = '';
+  document.getElementById('filterContractId').value = '';
+  filteredTasks = [...allTasks];
+  currentPage = 1;
+  renderTable();
+});
+
+// Allow Enter key on inputs to trigger search
+document.querySelectorAll('.filter-input').forEach(input => {
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
+});
+
+// ── Select All ──
+document.getElementById('selectAll').addEventListener('change', function() {
+  tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.checked = this.checked;
+    cb.closest('tr').classList.toggle('selected', this.checked);
+  });
+});
+tbody.addEventListener('change', e => {
+  if (e.target.type === 'checkbox') {
+    e.target.closest('tr').classList.toggle('selected', e.target.checked);
+  }
+});
+
+// ── Sorting ──
+let sortCol = null;
+let sortDir = 'asc'; // 'asc' or 'desc'
+
+function applySort() {
+  if (!sortCol) return;
+  const dir = sortDir === 'asc' ? 1 : -1;
+  filteredTasks.sort((a, b) => {
+    let av = a[sortCol] || '';
+    let bv = b[sortCol] || '';
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+}
+
+document.querySelectorAll('.data-table th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    if (sortCol === col) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortCol = col;
+      sortDir = 'asc';
+    }
+    // Update header classes
+    document.querySelectorAll('.data-table th.sortable').forEach(h => h.classList.remove('asc', 'desc'));
+    th.classList.add(sortDir);
+    applySort();
+    currentPage = 1;
+    renderTable();
+  });
+});
+
+// ── Row Actions ──
+function viewTask(taskId) {
+  const t = allTasks.find(x => x.id === taskId);
+  if (!t) return;
+  // Route to detail page based on task type
+  if (t.taskType === 'agent任务') {
+    window.location.href = 'task-agent.html';
+  } else if (t.taskType === '决策任务') {
+    window.location.href = 'task-decision.html';
+  } else if (t.taskType === '手工任务') {
+    window.location.href = 'task-manual.html';
+  } else {
+    window.location.href = 'task-detail.html';
+  }
+}
+
+function retryTask(taskId) {
+  const t = allTasks.find(x => x.id === taskId);
+  if (!t) return;
+  if (!confirm(`确认重新执行任务「${t.title}」？`)) return;
+  t.status = '处理中';
+  t.completedAt = '';
+  localStorage.setItem('analysisTasks', JSON.stringify(allTasks));
+  applyFilters();
+}
+
+function viewLog(taskId) {
+  const t = allTasks.find(x => x.id === taskId);
+  if (!t) return;
+  alert(`任务执行日志：${t.id}\n\n主题：${t.title}\n状态：${t.status}\n发起时间：${t.createdAt}\n完成时间：${t.completedAt || '未完成'}\n\n[日志详情功能开发中]`);
+}
+
+// ── Batch Export (placeholder) ──
+document.getElementById('batchExportBtn').addEventListener('click', () => {
+  const checked = tbody.querySelectorAll('input[type="checkbox"]:checked');
+  if (checked.length === 0) {
+    const btn = document.getElementById('batchExportBtn');
+    btn.style.borderColor = 'var(--warning)';
+    btn.style.color = 'var(--warning)';
+    setTimeout(() => { btn.style.borderColor = ''; btn.style.color = ''; }, 800);
+    return;
+  }
+  alert(`已选择 ${checked.length} 条任务，导出功能开发中…`);
+});
+
+// ── View Switching ──
+function switchView(view) {
+  document.querySelectorAll('.sub-nav-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.sub-nav-tab[data-view="${view}"]`).classList.add('active');
+  if (view === 'list') {
+    document.getElementById('listView').style.display = 'block';
+    document.getElementById('statsView').classList.remove('active');
+  } else {
+    document.getElementById('listView').style.display = 'none';
+    document.getElementById('statsView').classList.add('active');
+    renderStats();
+  }
+}
+
+// ── Stats Rendering ──
+function renderStats() {
+  const tasks = allTasks;
+  const total = tasks.length;
+  const completed = tasks.filter(t => t.status === '已完成').length;
+  const processing = tasks.filter(t => t.status === '处理中').length;
+  const pending = tasks.filter(t => t.status === '待处理').length;
+  const reviewing = tasks.filter(t => t.status === '审批中').length;
+
+  const overviewData = [
+    { label: '总任务数', value: total, color: 'var(--accent)' },
+    { label: '已完成', value: completed, color: 'var(--success)' },
+    { label: '处理中', value: processing, color: 'var(--accent)' },
+    { label: '待处理', value: pending, color: 'var(--warning)' },
+    { label: '审批中', value: reviewing, color: 'var(--muted)' }
+  ];
+
+  document.getElementById('statsOverview').innerHTML = overviewData.map(d => `
+    <div class="stat-card">
+      <div class="stat-card-value">${d.value}</div>
+      <div class="stat-card-label">${d.label}</div>
+      <div class="stat-card-bar">
+        <div class="stat-card-bar-fill" style="width:${total ? (d.value / total * 100) : 0}%; background:${d.color};"></div>
+      </div>
+    </div>
+  `).join('');
+
+  // Type distribution
+  const typeCounts = {};
+  tasks.forEach(t => { typeCounts[t.taskType] = (typeCounts[t.taskType] || 0) + 1; });
+  renderDistribution('typeDistribution', typeCounts, total, {
+    'agent任务': 'var(--accent)', '决策任务': 'var(--warning)', '手工任务': 'var(--muted)'
+  });
+
+  // Status distribution
+  const statusCounts = {};
+  tasks.forEach(t => { statusCounts[t.status] = (statusCounts[t.status] || 0) + 1; });
+  renderDistribution('statusDistribution', statusCounts, total, {
+    '已完成': 'var(--success)', '处理中': 'var(--accent)', '待处理': 'var(--warning)', '审批中': 'var(--muted)'
+  });
+
+  // Agent distribution
+  const agentCounts = {};
+  tasks.forEach(t => { agentCounts[t.agent] = (agentCounts[t.agent] || 0) + 1; });
+  renderDistribution('agentDistribution', agentCounts, total, {});
+
+  // Trend — dynamic from actual data (last 7 days)
+  const today = new Date(2026, 4, 13); // May 13, 2026
+  const days = [];
+  const dayCounts = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const mm = d.getMonth() + 1;
+    const dd = d.getDate();
+    days.push(`${mm}/${dd}`);
+    const dayStr = `2026/${String(mm).padStart(2, '0')}/${String(dd).padStart(2, '0')}`;
+    dayCounts.push(tasks.filter(t => {
+      const parts = t.createdAt.split(' ')[0].split('/');
+      const tDayStr = `${parts[0]}/${String(parts[1]).padStart(2, '0')}/${String(parts[2]).padStart(2, '0')}`;
+      return tDayStr === dayStr;
+    }).length);
+  }
+  const maxDay = Math.max(...dayCounts, 1);
+  document.getElementById('trendDistribution').innerHTML = days.map((d, i) => `
+    <div class="stat-bar-item">
+      <span class="stat-bar-label">${d}</span>
+      <div class="stat-bar-track">
+        <div class="stat-bar-fill" style="width:${(dayCounts[i] / maxDay * 100)}%; background:var(--accent);"></div>
+      </div>
+      <span class="stat-bar-count">${dayCounts[i]}</span>
+    </div>
+  `).join('');
+}
+
+function renderDistribution(containerId, counts, total, colorMap) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const maxCount = Math.max(...entries.map(e => e[1]), 1);
+  const colors = ['var(--accent)', 'var(--success)', 'var(--warning)', 'var(--muted)', '#7c3aed', '#ea580c'];
+  document.getElementById(containerId).innerHTML = entries.map((e, i) => {
+    const color = colorMap[e[0]] || colors[i % colors.length];
+    return `
+      <div class="stat-bar-item">
+        <span class="stat-bar-label">${e[0]}</span>
+        <div class="stat-bar-track">
+          <div class="stat-bar-fill" style="width:${(e[1] / maxCount * 100)}%; background:${color};"></div>
+        </div>
+        <span class="stat-bar-count">${e[1]}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── Init ──
+renderTable();
+</script>
+
+</body>
+</html>

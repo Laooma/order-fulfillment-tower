@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920">
+<title>Agent 任务详情 — 订单履约控制塔</title>
+<style>
+:root {
+  --bg:      oklch(99% 0.002 240);
+  --surface: oklch(100% 0 0);
+  --fg:      oklch(18% 0.012 250);
+  --muted:   oklch(54% 0.012 250);
+  --border:  oklch(92% 0.005 250);
+  --accent:  oklch(58% 0.18 255);
+  --accent-bg: oklch(95% 0.04 255);
+
+  --success:  oklch(55% 0.16 145);
+  --success-bg: oklch(96% 0.04 145);
+  --warning:  oklch(65% 0.16 75);
+  --warning-bg: oklch(97% 0.04 80);
+  --danger:   oklch(58% 0.20 25);
+  --danger-bg: oklch(97% 0.04 25);
+  --neutral-bg: oklch(95% 0.005 250);
+
+  --agent-accent:  oklch(58% 0.18 255);
+  --agent-bg:      oklch(95% 0.04 255);
+  --decision-accent: oklch(65% 0.16 75);
+  --decision-bg:   oklch(97% 0.04 80);
+  --manual-accent: oklch(54% 0.012 250);
+  --manual-bg:     oklch(95% 0.005 250);
+
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  --nav-h: 48px;
+  --sub-nav-h: 36px;
+  --radius: 6px;
+  --radius-sm: 4px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Top Navigation ── */
+.topnav {
+  height: var(--nav-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px 0 0;
+  flex-shrink: 0;
+  z-index: 100;
+}
+.topnav-logo {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; height: 100%;
+  border-right: 1px solid var(--border);
+  font-size: 14px; font-weight: 600; color: var(--fg);
+  letter-spacing: -0.02em; white-space: nowrap; min-width: 180px;
+}
+.topnav-logo-icon {
+  width: 28px; height: 28px; background: var(--accent);
+  border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.topnav-logo-icon svg { fill: #fff; }
+.topnav-tabs { display: flex; align-items: stretch; height: 100%; flex: 1; }
+.topnav-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 16px; height: 100%; font-size: 13px; color: var(--muted);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  transition: color 120ms, border-color 120ms;
+  white-space: nowrap; user-select: none; text-decoration: none;
+}
+.topnav-tab:hover { color: var(--fg); }
+.topnav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.topnav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.topnav-user {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px 4px 4px; border-radius: var(--radius);
+  cursor: pointer; transition: background 120ms;
+}
+.topnav-user:hover { background: var(--bg); }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; flex-shrink: 0;
+}
+.topnav-username { font-size: 13px; font-weight: 500; color: var(--fg); }
+.topnav-tag {
+  font-size: 11px; color: var(--muted); background: var(--neutral-bg);
+  padding: 1px 6px; border-radius: 3px; font-family: var(--font-mono);
+}
+
+/* ── Sub Navigation ── */
+.sub-nav {
+  height: var(--sub-nav-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: stretch; padding: 0 16px;
+  flex-shrink: 0; gap: 0;
+}
+.sub-nav-tab {
+  display: flex; align-items: center; padding: 0 14px;
+  font-size: 12px; color: var(--muted); text-decoration: none;
+  border-bottom: 2px solid transparent; cursor: pointer;
+  transition: color 120ms, border-color 120ms; white-space: nowrap;
+}
+.sub-nav-tab:hover { color: var(--fg); }
+.sub-nav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+
+/* ── Main Layout ── */
+.main-layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Left: Task Meta ── */
+.left-meta {
+  width: 260px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  flex-shrink: 0; overflow-y: auto;
+}
+.meta-header {
+  padding: 14px; border-bottom: 1px solid var(--border);
+}
+.meta-status-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.meta-status {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 3px;
+}
+.meta-status.warn { background: var(--warning-bg); color: var(--warning); }
+.meta-status.danger { background: var(--danger-bg); color: var(--danger); }
+.meta-status.success { background: var(--success-bg); color: var(--success); }
+.meta-id {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+  color: var(--fg); letter-spacing: -0.01em;
+}
+.meta-company {
+  font-size: 12px; color: var(--muted); margin-top: 4px;
+  line-height: 1.4;
+}
+
+.meta-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.meta-section-title {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+.meta-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.meta-row:last-child { margin-bottom: 0; }
+.meta-label { font-size: 12px; color: var(--muted); }
+.meta-value { font-size: 12px; font-weight: 500; color: var(--fg); }
+.meta-value.mono { font-family: var(--font-mono); }
+.meta-progress-bar {
+  width: 100%; height: 4px; background: var(--border);
+  border-radius: 2px; margin-top: 6px; overflow: hidden;
+}
+.meta-progress-fill {
+  height: 100%; border-radius: 2px; background: var(--accent);
+}
+
+/* ── Center: Detail Content ── */
+.center-detail {
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden; background: var(--bg);
+}
+
+.detail-header-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.detail-header-left { display: flex; align-items: center; gap: 12px; }
+.detail-back-btn {
+  height: 28px; padding: 0 12px;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px; font-family: var(--font-body);
+  cursor: pointer; transition: all 120ms;
+}
+.detail-back-btn:hover { background: var(--bg); color: var(--fg); }
+.detail-header-title { font-size: 14px; font-weight: 600; color: var(--fg); }
+.detail-header-actions { display: flex; gap: 8px; }
+.btn {
+  height: 28px; padding: 0 12px; border-radius: var(--radius-sm);
+  font-size: 12px; font-family: var(--font-body); font-weight: 500;
+  cursor: pointer; border: none;
+  transition: background 120ms;
+  display: flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.btn-primary { background: var(--fg); color: #fff; }
+.btn-primary:hover { background: oklch(28% 0.012 250); }
+.btn-outline { background: var(--surface); color: var(--fg); border: 1px solid var(--border); }
+.btn-outline:hover { background: var(--bg); }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-accent:hover { background: oklch(52% 0.18 255); }
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover { background: oklch(48% 0.16 145); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { background: oklch(52% 0.20 25); }
+.btn-ghost { background: transparent; color: var(--muted); border: 1px solid transparent; }
+.btn-ghost:hover { background: var(--bg); color: var(--fg); }
+
+.detail-body { flex: 1; overflow-y: auto; padding: 16px; }
+
+/* ── Task Type Switcher ── */
+.type-switcher {
+  display: flex; gap: 0; margin-bottom: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  width: fit-content;
+}
+.type-switcher-btn {
+  padding: 8px 18px; font-size: 13px; font-weight: 500;
+  cursor: pointer; border: none; background: transparent;
+  color: var(--muted); transition: all 120ms;
+  display: flex; align-items: center; gap: 6px;
+  position: relative;
+}
+.type-switcher-btn:hover { color: var(--fg); background: var(--bg); }
+.type-switcher-btn.active { color: #fff; }
+.type-switcher-btn.active.agent-type { background: var(--agent-accent); }
+.type-switcher-btn.active.decision-type { background: var(--decision-accent); }
+.type-switcher-btn.active.manual-type { background: var(--manual-accent); }
+.type-switcher-btn + .type-switcher-btn {
+  border-left: 1px solid var(--border);
+}
+.type-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.type-dot.agent { background: var(--agent-accent); }
+.type-dot.decision { background: var(--decision-accent); }
+.type-dot.manual { background: var(--manual-accent); }
+.type-switcher-btn.active .type-dot { background: rgba(255,255,255,0.8); }
+
+/* ── Detail Cards ── */
+.detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.detail-card-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.detail-card-title { font-size: 13px; font-weight: 600; color: var(--fg); }
+.detail-card-body { padding: 14px 16px; }
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.info-item-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.info-item-value { font-size: 12px; font-weight: 500; color: var(--fg); }
+.info-item-value.mono { font-family: var(--font-mono); }
+
+/* ── Timeline (shared) ── */
+.timeline { display: flex; flex-direction: column; gap: 0; }
+.timeline-item {
+  display: flex; gap: 12px; padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.timeline-item:last-child { border-bottom: none; }
+.timeline-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--border); flex-shrink: 0; margin-top: 4px;
+}
+.timeline-item.active .timeline-dot { background: var(--accent); }
+.timeline-item.completed .timeline-dot { background: var(--success); }
+.timeline-content { flex: 1; }
+.timeline-title { font-size: 12px; font-weight: 500; color: var(--fg); }
+.timeline-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.timeline-desc { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+
+/* ── Agent Task Specific ── */
+.agent-status-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  background: var(--agent-bg);
+  border: 1px solid oklch(88% 0.07 255);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.agent-status-icon {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--agent-accent); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; flex-shrink: 0;
+}
+.agent-status-body { flex: 1; }
+.agent-status-title { font-size: 13px; font-weight: 600; color: var(--fg); }
+.agent-status-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.agent-status-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 10px;
+  border-radius: 10px; background: var(--agent-accent); color: #fff;
+}
+
+.agent-log-step {
+  display: flex; gap: 12px; padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.agent-log-step:last-child { border-bottom: none; }
+.agent-log-num {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--agent-bg); color: var(--agent-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; flex-shrink: 0;
+  border: 1px solid oklch(88% 0.07 255);
+}
+.agent-log-step.completed .agent-log-num {
+  background: var(--success); color: #fff; border-color: var(--success);
+}
+.agent-log-step.running .agent-log-num {
+  background: var(--agent-accent); color: #fff; border-color: var(--agent-accent);
+  animation: pulse 1.5s infinite;
+}
+.agent-log-body { flex: 1; }
+.agent-log-title { font-size: 12px; font-weight: 500; color: var(--fg); }
+.agent-log-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.agent-log-output {
+  margin-top: 6px; padding: 8px 10px;
+  background: oklch(97% 0.003 250);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--fg); line-height: 1.55;
+}
+.agent-suggestion-box {
+  background: var(--agent-bg);
+  border: 1px solid oklch(88% 0.07 255);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.agent-suggestion-title {
+  font-size: 12px; font-weight: 600; color: var(--fg);
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 10px;
+}
+.agent-suggestion-body {
+  font-size: 12px; color: var(--fg); line-height: 1.65;
+}
+.agent-action-bar {
+  display: flex; gap: 8px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--border);
+}
+
+/* ── Decision Task Specific ── */
+.decision-status-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  background: var(--decision-bg);
+  border: 1px solid oklch(90% 0.08 80);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.decision-status-icon {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--decision-accent); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; flex-shrink: 0;
+}
+.decision-status-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 10px;
+  border-radius: 10px; background: var(--decision-accent); color: #fff;
+}
+
+.decision-option-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.decision-option-table th {
+  text-align: left; padding: 8px 10px;
+  background: oklch(97% 0.003 250);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 600; color: var(--muted);
+}
+.decision-option-table td {
+  padding: 10px; border-bottom: 1px solid oklch(95% 0.003 250);
+  vertical-align: top; line-height: 1.55;
+}
+.decision-option-table tr:hover td { background: oklch(98% 0.003 250); }
+.decision-option-table .option-selected td {
+  background: var(--decision-bg);
+}
+.decision-radio {
+  width: 16px; height: 16px; accent-color: var(--decision-accent);
+  cursor: pointer;
+}
+.decision-option-label {
+  font-weight: 600; color: var(--fg);
+}
+.decision-option-desc { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+.decision-form {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.decision-form-label {
+  font-size: 12px; font-weight: 500; color: var(--fg);
+}
+.decision-form-textarea {
+  width: 100%; min-height: 72px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px; font-family: var(--font-body); color: var(--fg);
+  resize: vertical; outline: none; line-height: 1.55;
+  background: var(--surface);
+}
+.decision-form-textarea:focus {
+  border-color: var(--decision-accent);
+  box-shadow: 0 0 0 3px oklch(65% 0.16 75 / 0.12);
+}
+.decision-action-bar {
+  display: flex; gap: 8px; margin-top: 4px;
+}
+
+/* ── Manual Task Specific ── */
+.manual-status-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  background: var(--manual-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.manual-status-icon {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--manual-accent); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; flex-shrink: 0;
+}
+.manual-status-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 10px;
+  border-radius: 10px; background: var(--manual-accent); color: #fff;
+}
+
+.manual-checklist { display: flex; flex-direction: column; }
+.manual-checklist-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+  cursor: pointer; transition: background 80ms;
+}
+.manual-checklist-item:last-child { border-bottom: none; }
+.manual-checklist-item:hover { background: oklch(98% 0.003 250); }
+.manual-checklist-item.done .manual-check-text {
+  text-decoration: line-through; color: var(--muted);
+}
+.manual-checkbox {
+  width: 16px; height: 16px; accent-color: var(--accent);
+  margin-top: 1px; flex-shrink: 0; cursor: pointer;
+}
+.manual-check-body { flex: 1; }
+.manual-check-text { font-size: 12px; font-weight: 500; color: var(--fg); line-height: 1.4; }
+.manual-check-hint { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+
+.manual-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.manual-form-item { display: flex; flex-direction: column; gap: 4px; }
+.manual-form-item.full { grid-column: 1 / -1; }
+.manual-form-label {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+}
+.manual-form-input {
+  height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px; font-family: var(--font-body); color: var(--fg);
+  background: var(--surface); outline: none;
+}
+.manual-form-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px oklch(58% 0.18 255 / 0.10);
+}
+.manual-attach-zone {
+  border: 1.5px dashed var(--border); border-radius: var(--radius);
+  padding: 20px; text-align: center;
+  background: oklch(98% 0.003 250);
+  cursor: pointer; transition: all 120ms;
+}
+.manual-attach-zone:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.manual-attach-icon {
+  font-size: 20px; color: var(--muted); margin-bottom: 6px;
+}
+.manual-attach-text { font-size: 12px; color: var(--muted); }
+.manual-attach-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+/* ── Right: AI Panel ── */
+.right-panel {
+  width: 300px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  flex-shrink: 0;
+}
+.rp-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; flex-shrink: 0;
+}
+.rp-title {
+  height: 36px; font-size: 13px; font-weight: 600; color: var(--fg);
+  display: flex; align-items: center; gap: 6px; padding: 0 12px;
+}
+.rp-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success); animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.rp-tabs {
+  display: flex; gap: 0; padding: 0 8px 0 12px;
+}
+.rp-tab {
+  padding: 6px 12px; font-size: 12px; font-weight: 500;
+  color: var(--muted); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 120ms, border-color 120ms; white-space: nowrap;
+}
+.rp-tab:hover { color: var(--fg); }
+.rp-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.rp-tab-panel { display: none; }
+.rp-tab-panel.active { display: flex; flex-direction: column; }
+
+.rp-body {
+  flex: 1; overflow: hidden;
+  display: flex; flex-direction: column; background: var(--bg);
+}
+.chat-msg {
+  max-width: 88%; padding: 8px 11px; border-radius: var(--radius);
+  font-size: 12px; line-height: 1.6; margin-bottom: 8px;
+}
+.chat-msg.ai {
+  background: var(--surface); border: 1px solid var(--border);
+  align-self: flex-start; color: var(--fg);
+}
+.rp-footer {
+  background: var(--surface); border-top: 1px solid var(--border);
+  padding: 10px; flex-shrink: 0;
+}
+.rp-input-box {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); overflow: hidden;
+}
+.rp-textarea {
+  width: 100%; min-height: 52px; max-height: 120px; padding: 8px 10px;
+  border: none; background: transparent; font-size: 12px;
+  font-family: var(--font-body); color: var(--fg); resize: none; outline: none;
+  line-height: 1.6; display: block;
+}
+.rp-textarea::placeholder { color: var(--muted); }
+.rp-toolbar {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px 6px; border-top: 1px solid var(--border); background: var(--surface);
+}
+.rp-agent-btn {
+  display: flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px 0 5px; border-radius: 11px;
+  background: #1dc77e; border: none; color: #fff;
+  font-size: 11px; font-weight: 700; cursor: pointer;
+  transition: background 120ms; white-space: nowrap; flex-shrink: 0;
+}
+.rp-agent-btn:hover { background: #18b370; }
+.rp-agent-name { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.rp-send-btn {
+  height: 28px; padding: 0 14px; background: var(--accent);
+  color: #fff; border: none; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background 120ms; flex-shrink: 0; margin-left: auto;
+}
+.rp-send-btn:hover { background: oklch(52% 0.20 255); }
+
+/* ── Task Detail Card (right panel) ── */
+.task-detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 12px;
+  flex-shrink: 0;
+}
+.task-detail-card-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.task-detail-card-id {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--fg);
+}
+.task-detail-card-type {
+  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 3px;
+}
+.agent-type-label { background: var(--agent-bg); color: var(--agent-accent); }
+.decision-type-label { background: var(--decision-bg); color: var(--decision-accent); }
+.manual-type-label { background: var(--manual-bg); color: var(--manual-accent); }
+.task-detail-card-body { padding: 10px 12px; }
+.task-detail-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0;
+}
+.task-detail-row + .task-detail-row { border-top: 1px solid oklch(96% 0.003 250); }
+.tdl { font-size: 11px; color: var(--muted); }
+.tdv { font-size: 12px; font-weight: 500; color: var(--fg); }
+.tdv.mono { font-family: var(--font-mono); }
+.priority-label { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+.priority-label.high { background: var(--danger-bg); color: var(--danger); }
+.priority-label.medium { background: var(--warning-bg); color: var(--warning); }
+.priority-label.low { background: var(--success-bg); color: var(--success); }
+.overdue { color: var(--danger) !important; }
+.detail-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; }
+.detail-status.danger { background: var(--danger-bg); color: var(--danger); }
+.detail-status.warn { background: var(--warning-bg); color: var(--warning); }
+.detail-status.success { background: var(--success-bg); color: var(--success); }
+.task-detail-desc {
+  margin: 0 12px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.task-detail-desc-title {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  margin-bottom: 6px;
+}
+.task-detail-desc-text {
+  font-size: 12px; color: var(--fg); line-height: 1.6;
+}
+
+/* ── Content visibility ── */
+.type-content { display: none; }
+.type-content.active { display: block; }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-logo">
+    <div class="topnav-logo-icon">
+      <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2h4v4H2zM8 2h4v4H8zM2 8h4v4H2zM8 8h4v4H8z" opacity="0.9"/></svg>
+    </div>
+    订单履约控制塔
+  </div>
+  <div class="topnav-tabs">
+    <a class="topnav-tab" href="index.html">首页</a>
+    <a class="topnav-tab" href="history-analysis.html">历史分析</a>
+    <a class="topnav-tab" href="analysis-result.html">任务列表</a>
+    <a class="topnav-tab" href="#">系统设置</a>
+  </div>
+  <div class="topnav-right">
+    <div class="topnav-user">
+      <div class="avatar">Hi</div>
+      <span class="topnav-username">Hi·金星米</span>
+      <span class="topnav-tag">运营</span>
+    </div>
+  </div>
+</nav>
+
+<div class="sub-nav">
+  <a class="sub-nav-tab" href="analysis-result.html">看板分析</a>
+  <a class="sub-nav-tab" href="analysis-result.html">合同待办清单</a>
+  <a class="sub-nav-tab active" href="task-agent.html">Agent 任务</a>
+</div>
+
+<div class="main-layout">
+
+  <aside class="left-meta">
+    <div class="meta-header">
+      <div class="meta-status-row">
+        <span class="meta-status danger">异常</span>
+        <span class="meta-status warn">紧急</span>
+      </div>
+      <div class="meta-id">SCJD20241114-K01</div>
+      <div class="meta-company">中国铁制股份有限公司 · 华北大区 / 安徽</div>
+    </div>
+
+    <div class="meta-section">
+      <div class="meta-section-title">基本信息</div>
+      <div class="meta-row"><span class="meta-label">合同金额</span><span class="meta-value mono">1,558.00 万元</span></div>
+      <div class="meta-row"><span class="meta-label">下单日期</span><span class="meta-value">2024/11/14</span></div>
+      <div class="meta-row"><span class="meta-label">交货期</span><span class="meta-value">47 天</span></div>
+      <div class="meta-row"><span class="meta-label">销售员</span><span class="meta-value">李明</span></div>
+      <div class="meta-row"><span class="meta-label">采购员</span><span class="meta-value">王芳</span></div>
+    </div>
+
+    <div class="meta-section">
+      <div class="meta-section-title">履约进度</div>
+      <div class="meta-row"><span class="meta-label">发货比例</span><span class="meta-value mono">65%</span></div>
+      <div class="meta-progress-bar"><div class="meta-progress-fill" style="width:65%"></div></div>
+      <div class="meta-row" style="margin-top:10px"><span class="meta-label">签收比例</span><span class="meta-value mono">32%</span></div>
+      <div class="meta-progress-bar"><div class="meta-progress-fill" style="width:32%"></div></div>
+    </div>
+
+    <div class="meta-section">
+      <div class="meta-section-title">产品信息</div>
+      <div class="meta-row"><span class="meta-label">产品型号</span><span class="meta-value">CCU-2000</span></div>
+      <div class="meta-row"><span class="meta-label">物料编号</span><span class="meta-value mono">HT001241</span></div>
+      <div class="meta-row"><span class="meta-label">SKU 数量</span><span class="meta-value mono">6</span></div>
+      <div class="meta-row"><span class="meta-label">发货方式</span><span class="meta-value">直发客户</span></div>
+    </div>
+  </aside>
+
+  <div class="center-detail">
+    <div class="detail-header-bar">
+      <div class="detail-header-left">
+        <button class="detail-back-btn" onclick="history.back()">返回</button>
+        <span class="detail-header-title">Agent 任务 — 未接发货问题处理</span>
+      </div>
+      <div class="detail-header-actions">
+        <button class="btn btn-outline">转交</button>
+        <button class="btn btn-accent">标记完成</button>
+      </div>
+    </div>
+
+    <div class="detail-body">
+
+      <!-- ═══════════════════════════════════════════
+           AGENT TASK CONTENT
+           ═══════════════════════════════════════════ -->
+      <div id="agent-content" class="type-content active">
+
+        <div class="agent-status-card">
+          <div class="agent-status-icon">A</div>
+          <div class="agent-status-body">
+            <div class="agent-status-title">产品型销售订单确认收入智能体</div>
+            <div class="agent-status-sub">已执行 4 个步骤 · 耗时 2 分 18 秒 · 最后更新 10:24:36</div>
+          </div>
+          <span class="agent-status-badge">执行完成</span>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-card-header">
+            <span class="detail-card-title">执行日志</span>
+            <span style="font-size:11px;color:var(--muted);font-family:var(--font-mono);">4 / 4 步骤</span>
+          </div>
+          <div class="detail-card-body" style="padding:0 16px;">
+            <div class="agent-log-step completed">
+              <div class="agent-log-num">1</div>
+              <div class="agent-log-body">
+                <div class="agent-log-title">获取合同与发货数据</div>
+                <div class="agent-log-time">10:22:14 · 耗时 0.8s</div>
+                <div class="agent-log-output">
+                  合同 SCJD20241114-K01 已加载<br>
+                  发货单：SF20241202001（主仓库 → 安徽中转仓）<br>
+                  当前状态：运输中 · 已耗时 5 天
+                </div>
+              </div>
+            </div>
+            <div class="agent-log-step completed">
+              <div class="agent-log-num">2</div>
+              <div class="agent-log-body">
+                <div class="agent-log-title">调用物流接口查询实时轨迹</div>
+                <div class="agent-log-time">10:22:35 · 耗时 1.2s</div>
+                <div class="agent-log-output">
+                  顺丰接口返回：货物已于 12/04 到达「合肥蜀山中转场」<br>
+                  下一站：安徽区域配送中心 · 预计 12/05 送达
+                </div>
+              </div>
+            </div>
+            <div class="agent-log-step completed">
+              <div class="agent-log-num">3</div>
+              <div class="agent-log-body">
+                <div class="agent-log-title">比对系统入库记录</div>
+                <div class="agent-log-time">10:23:08 · 耗时 0.5s</div>
+                <div class="agent-log-output">
+                  系统入库记录：未找到 HT001241 对应入库单<br>
+                  异常判定：物流已到达但仓库未扫码入库
+                </div>
+              </div>
+            </div>
+            <div class="agent-log-step completed">
+              <div class="agent-log-num">4</div>
+              <div class="agent-log-body">
+                <div class="agent-log-title">生成处理建议与待办</div>
+                <div class="agent-log-time">10:24:36 · 耗时 0.3s</div>
+                <div class="agent-log-output">
+                  生成 3 项建议 · 1 项待办任务 · 已推送至「张伟」
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-card-header">
+            <span class="detail-card-title">AI 处理建议</span>
+          </div>
+          <div class="detail-card-body">
+            <div class="agent-suggestion-box">
+              <div class="agent-suggestion-title">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="var(--agent-accent)"><path d="M7 1l1.8 4.2H13l-3.5 2.6L10.8 12 7 9.4 3.2 12l1.3-4.2L1 5.2h4.2z"/></svg>
+                智能分析结论
+              </div>
+              <div class="agent-suggestion-body">
+                <p style="margin-bottom:8px;">该异常为「物流已到达中转仓，但仓库尚未完成扫码入库」类型。根据历史数据，此类异常平均处理时长为 <strong>1.2 个工作日</strong>，95% 可在当天内解决。</p>
+                <p><strong>根因推测：</strong></p>
+                <ol style="margin:6px 0 0 18px; color:var(--muted); line-height:1.7;">
+                  <li>中转仓当日入库量较大，扫描排队延迟</li>
+                  <li>货物批次标签磨损，需人工复核后再入库</li>
+                  <li>物流方「到达」状态推送早于实际卸货完成时间</li>
+                </ol>
+              </div>
+              <div class="agent-action-bar">
+                <button class="btn btn-primary">采纳建议并执行</button>
+                <button class="btn btn-outline">重新执行 Agent</button>
+                <button class="btn btn-ghost">查看原始数据</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-card-header">
+            <span class="detail-card-title">问题信息</span>
+          </div>
+          <div class="detail-card-body">
+            <div class="info-grid">
+              <div><div class="info-item-label">问题类型</div><div class="info-item-value">未接发货</div></div>
+              <div><div class="info-item-label">问题分类</div><div class="info-item-value">问题类型 1</div></div>
+              <div><div class="info-item-label">发现时间</div><div class="info-item-value">2025/03/13</div></div>
+              <div><div class="info-item-label">当前状态</div><div class="info-item-value" style="color:var(--danger)">待处理</div></div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /agent-content -->
+
+
+    </div>
+  </div>
+
+  <aside class="right-panel">
+    <div class="rp-header">
+      <div class="rp-title">
+        <span class="rp-dot"></span>
+        AI 专属助手
+      </div>
+      <div class="rp-tabs">
+        <div class="rp-tab active" data-tab="chat">AI助手</div>
+        <div class="rp-tab" data-tab="detail">任务详情</div>
+      </div>
+    </div>
+    <div class="rp-body">
+      <div class="rp-tab-panel active" id="chatView" style="padding:12px; overflow-y:auto;">
+        <div class="chat-msg ai">
+          已为您加载任务 SCJD20241114-K01 的详情。当前问题为「未接发货」，建议优先联系中转仓确认入库状态。需要我帮您生成处理建议或待办清单吗？
+        </div>
+      </div>
+      <div class="rp-tab-panel" id="detailView" style="overflow-y:auto;">
+        <div class="task-detail-card">
+          <div class="task-detail-card-header">
+            <span class="task-detail-card-id">T-20241114-001</span>
+            <span class="task-detail-card-type agent-type-label">Agent任务</span>
+          </div>
+          <div class="task-detail-card-body">
+            <div class="task-detail-row"><span class="tdl">任务说明</span><span class="tdv">确认发货计划</span></div>
+            <div class="task-detail-row"><span class="tdl">关联合同</span><span class="tdv mono">SCJD20241114-K01</span></div>
+            <div class="task-detail-row"><span class="tdl">优先级</span><span class="tdv"><span class="priority-label high">高</span></span></div>
+            <div class="task-detail-row"><span class="tdl">负责人</span><span class="tdv">张伟</span></div>
+            <div class="task-detail-row"><span class="tdl">截止日期</span><span class="tdv overdue">2024/11/16</span></div>
+            <div class="task-detail-row"><span class="tdl">状态</span><span class="tdv"><span class="detail-status danger">逾期</span></span></div>
+            <div class="task-detail-row"><span class="tdl">执行步骤</span><span class="tdv mono">4 / 4 完成</span></div>
+          </div>
+        </div>
+        <div class="task-detail-desc">
+          <div class="task-detail-desc-title">描述</div>
+          <div class="task-detail-desc-text">华北大区 · 安徽仓库 · 铜精矿 5000吨。Agent已自动执行4个步骤，分析发现物流已到达但仓库未扫码入库，已生成处理建议并推送至负责人。</div>
+        </div>
+      </div>
+    </div>
+    <div class="rp-footer">
+      <div class="rp-input-box">
+        <textarea class="rp-textarea" placeholder="- 请输入 -"></textarea>
+        <div class="rp-toolbar">
+          <button class="rp-agent-btn">Agent</button>
+          <span class="rp-agent-name">产品型销售订单确认收入智能体</span>
+          <button class="rp-send-btn">发送</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+document.querySelectorAll('.rp-tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    const target = this.dataset.tab;
+    document.querySelectorAll('.rp-tab').forEach(t => t.classList.remove('active'));
+    this.classList.add('active');
+    document.querySelectorAll('.rp-tab-panel').forEach(p => p.classList.remove('active'));
+    if (target === 'chat') {
+      document.getElementById('chatView').classList.add('active');
+    } else if (target === 'detail') {
+      document.getElementById('detailView').classList.add('active');
+    }
+  });
+});
+</script>
+
+</body>
+</html>

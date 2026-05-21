@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.DS_Store
+.claude/
+.claw/
+.scratch/
+历史备份/
+*.db
+*.db-shm
+*.db-wal
+.env

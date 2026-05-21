@@ -1,0 +1,1739 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920">
+<title>订单履约控制塔 — AI分析结果</title>
+<style>
+/* ── Design System ── */
+:root {
+  --bg:      oklch(99% 0.002 240);
+  --surface: oklch(100% 0 0);
+  --fg:      oklch(18% 0.012 250);
+  --muted:   oklch(54% 0.012 250);
+  --border:  oklch(92% 0.005 250);
+  --accent:  oklch(58% 0.18 255);
+  --accent-bg: oklch(95% 0.04 255);
+
+  --success:  oklch(55% 0.16 145);
+  --success-bg: oklch(96% 0.04 145);
+  --warning:  oklch(65% 0.16 75);
+  --warning-bg: oklch(97% 0.04 80);
+  --danger:   oklch(58% 0.20 25);
+  --danger-bg: oklch(97% 0.04 25);
+  --neutral-bg: oklch(95% 0.005 250);
+
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  --nav-h: 48px;
+  --left-panel-w: 260px;
+  --right-panel-w: 300px;
+  --radius: 6px;
+  --radius-sm: 4px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Top Navigation ── */
+.topnav {
+  height: var(--nav-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px 0 0;
+  flex-shrink: 0;
+  z-index: 100;
+}
+.topnav-logo {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; height: 100%;
+  border-right: 1px solid var(--border);
+  font-size: 14px; font-weight: 600; color: var(--fg);
+  letter-spacing: -0.02em; white-space: nowrap; min-width: 180px;
+}
+.topnav-logo-icon {
+  width: 28px; height: 28px; background: var(--accent);
+  border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.topnav-logo-icon svg { fill: #fff; }
+.topnav-tabs { display: flex; align-items: stretch; height: 100%; flex: 1; }
+.topnav-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 16px; height: 100%; font-size: 13px; color: var(--muted);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  transition: color 120ms, border-color 120ms;
+  white-space: nowrap; user-select: none; text-decoration: none;
+}
+.topnav-tab:hover { color: var(--fg); }
+.topnav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.topnav-tab svg { opacity: 0.7; flex-shrink: 0; }
+.topnav-tab.active svg { opacity: 1; }
+.topnav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.sub-nav {
+  height: 36px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.sub-nav-tab {
+  padding: 0 16px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+  transition: color 120ms, border-color 120ms;
+}
+.sub-nav-tab:hover { color: var(--fg); }
+.sub-nav-tab.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.topnav-user {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px 4px 4px; border-radius: var(--radius);
+  cursor: pointer; transition: background 120ms;
+}
+.topnav-user:hover { background: var(--bg); }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; flex-shrink: 0;
+}
+.topnav-username { font-size: 13px; font-weight: 500; color: var(--fg); }
+.topnav-tag {
+  font-size: 11px; color: var(--muted); background: var(--neutral-bg);
+  padding: 1px 6px; border-radius: 3px; font-family: var(--font-mono);
+}
+
+/* ── Main Layout ── */
+.main-layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Left Panel: Contract List ── */
+.left-panel {
+  width: var(--left-panel-w);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.lp-header {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.lp-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 10px;
+}
+.lp-title-icon {
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.lp-sort {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--muted); cursor: pointer;
+  padding: 3px 6px; border-radius: var(--radius-sm);
+  transition: background 120ms; width: fit-content;
+}
+.lp-sort:hover { background: var(--bg); color: var(--fg); }
+.lp-sort svg { flex-shrink: 0; }
+
+.lp-list { flex: 1; overflow-y: auto; padding: 4px 10px; }
+.lp-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px; border-radius: var(--radius);
+  cursor: pointer; transition: background 80ms;
+  margin-bottom: 4px; border: 1px solid transparent;
+}
+.lp-item:hover { background: var(--bg); }
+.lp-item.active { background: var(--accent-bg); border-color: oklch(88% 0.06 255); }
+.lp-item.selected { background: oklch(96% 0.015 255); border-color: var(--accent); }
+.lp-item-check {
+  width: 16px; height: 16px; accent-color: var(--accent);
+  cursor: pointer; flex-shrink: 0; margin-top: 2px;
+}
+.lp-item-body { flex: 1; min-width: 0; }
+.lp-item-id {
+  font-size: 12px; font-weight: 500; color: var(--fg);
+  font-family: var(--font-mono); line-height: 1.4;
+}
+.lp-item.active .lp-item-id { color: var(--accent); }
+.lp-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.lp-item-progress {
+  margin-top: 6px;
+}
+.lp-item-progress-label {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--muted); margin-bottom: 3px;
+}
+.lp-item-progress-label strong {
+  font-weight: 600; font-family: var(--font-mono);
+}
+.lp-item-progress-bar {
+  width: 100%; height: 4px; background: var(--border);
+  border-radius: 2px; overflow: hidden;
+}
+.lp-item-progress-fill {
+  height: 100%; border-radius: 2px; background: var(--accent);
+}
+.lp-item-status {
+  font-size: 10px; font-weight: 500; padding: 2px 6px;
+  border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+}
+.lp-status-blue { background: oklch(94% 0.04 255); color: oklch(42% 0.16 255); }
+.lp-status-green { background: oklch(94% 0.04 145); color: oklch(38% 0.14 145); }
+.lp-status-orange { background: oklch(96% 0.04 55); color: oklch(48% 0.14 55); }
+
+.lp-footer {
+  padding: 10px 14px; border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Analysis Task ID */
+.lp-task-id {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin: 6px 14px 0;
+  background: oklch(97% 0.012 240);
+  border: 1px solid oklch(92% 0.015 240);
+  border-radius: var(--radius-sm);
+}
+.lp-task-id-label {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.lp-task-id-value {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+.lp-action-btn {
+  width: 100%; height: 36px;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: var(--radius); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background 120ms;
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px;
+}
+.lp-action-btn:hover { background: oklch(52% 0.20 255); }
+
+/* ── Center Content ── */
+.center-content {
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden; background: var(--bg);
+}
+
+/* Title Card */
+.title-card {
+  margin: 4px 10px 0;
+  background: #0049f3; color: #fff;
+  border-radius: var(--radius); padding: 5px 12px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+  min-height: 36px;
+}
+.title-card-left { display: flex; align-items: center; gap: 10px; }
+.title-card-logo {
+  width: 28px; height: 28px; background: rgba(255,255,255,0.2);
+  border-radius: var(--radius); display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.title-card-info h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+.title-card-info p { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 1px; }
+.title-card-amount { text-align: right; }
+.title-card-amount .amt { font-size: 18px; font-weight: 700; font-family: var(--font-mono); }
+.title-card-amount .amt-label { font-size: 10px; color: rgba(255,255,255,0.7); }
+
+/* Metric Cards */
+.metrics-row {
+  display: flex; gap: 6px;
+  padding: 4px 10px; flex-shrink: 0;
+}
+.metric-card {
+  flex: 1; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.metric-card-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.metric-card-value {
+  font-size: 16px; font-weight: 700; font-family: var(--font-mono);
+  color: var(--fg);
+}
+.metric-card-bar {
+  width: 100%; height: 3px; background: var(--border);
+  border-radius: 2px; margin-top: 6px; overflow: hidden;
+}
+.metric-card-fill {
+  height: 100%; border-radius: 2px; background: var(--accent);
+}
+
+/* Kanban Board */
+.kanban-board {
+  flex: 1; overflow-x: auto; overflow-y: hidden;
+  display: flex; gap: 10px;
+  padding: 0 12px 12px;
+}
+.kanban-col {
+  width: 280px; min-width: 280px;
+  display: flex; flex-direction: column;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+/* Column 1 - Blue tint (未接发货) */
+.kanban-col.type1 { background: oklch(97.5% 0.006 240); border: 1px solid oklch(90% 0.015 240); }
+.kanban-col.type1 .kanban-col-header { background: oklch(94% 0.015 240); border-bottom: 1px solid oklch(88% 0.02 240); }
+.kanban-col.type1 .kanban-col-count { color: oklch(45% 0.12 240); background: oklch(93% 0.02 240); }
+.kanban-col.type1 .kanban-card { background: #fff; border: 1px solid oklch(92% 0.01 240); }
+.kanban-col.type1 .kanban-card:hover { border-color: oklch(82% 0.02 240); box-shadow: 0 2px 8px oklch(85% 0.015 240 / 0.25); }
+.kanban-col.type1 .kanban-card-id { color: oklch(45% 0.12 240); }
+/* Column 2 - Green tint (入库登记) */
+.kanban-col.type2 { background: oklch(97.5% 0.005 145); border: 1px solid oklch(90% 0.012 145); }
+.kanban-col.type2 .kanban-col-header { background: oklch(94% 0.012 145); border-bottom: 1px solid oklch(88% 0.018 145); }
+.kanban-col.type2 .kanban-col-count { color: oklch(40% 0.1 145); background: oklch(93% 0.015 145); }
+.kanban-col.type2 .kanban-card { background: #fff; border: 1px solid oklch(92% 0.008 145); }
+.kanban-col.type2 .kanban-card:hover { border-color: oklch(82% 0.015 145); box-shadow: 0 2px 8px oklch(85% 0.012 145 / 0.25); }
+.kanban-col.type2 .kanban-card-id { color: oklch(40% 0.1 145); }
+/* Column 3 - Orange tint (发货方式) */
+.kanban-col.type3 { background: oklch(97.5% 0.005 55); border: 1px solid oklch(90% 0.012 55); }
+.kanban-col.type3 .kanban-col-header { background: oklch(94% 0.012 55); border-bottom: 1px solid oklch(88% 0.018 55); }
+.kanban-col.type3 .kanban-col-count { color: oklch(48% 0.1 55); background: oklch(93% 0.015 55); }
+.kanban-col.type3 .kanban-card { background: #fff; border: 1px solid oklch(92% 0.008 55); }
+.kanban-col.type3 .kanban-card:hover { border-color: oklch(82% 0.015 55); box-shadow: 0 2px 8px oklch(85% 0.012 55 / 0.25); }
+.kanban-col.type3 .kanban-card-id { color: oklch(48% 0.1 55); }
+/* Column 4 - Purple tint (未知问题) */
+.kanban-col.type4 { background: oklch(97.5% 0.005 300); border: 1px solid oklch(90% 0.012 300); }
+.kanban-col.type4 .kanban-col-header { background: oklch(94% 0.012 300); border-bottom: 1px solid oklch(88% 0.018 300); }
+.kanban-col.type4 .kanban-col-count { color: oklch(42% 0.1 300); background: oklch(93% 0.015 300); }
+.kanban-col.type4 .kanban-card { background: #fff; border: 1px solid oklch(92% 0.008 300); }
+.kanban-col.type4 .kanban-card:hover { border-color: oklch(82% 0.015 300); box-shadow: 0 2px 8px oklch(85% 0.012 300 / 0.25); }
+.kanban-col.type4 .kanban-card-id { color: oklch(42% 0.1 300); }
+
+.kanban-col-header {
+  padding: 8px 10px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.kanban-col-title { font-size: 12px; font-weight: 600; color: var(--fg); }
+.kanban-col-count {
+  font-size: 11px; font-weight: 600;
+  font-family: var(--font-mono);
+  padding: 1px 6px; border-radius: 3px;
+}
+.kanban-col-body {
+  flex: 1; overflow-y: auto;
+  padding: 8px;
+}
+.kanban-card {
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.kanban-card-text {
+  font-size: 11px; color: var(--muted); line-height: 1.55;
+}
+.kanban-card-tags { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.kanban-card-tag {
+  font-size: 10px; font-weight: 500; padding: 1px 6px;
+  border-radius: 3px; font-family: var(--font-mono);
+}
+/* Tags tinted by column type */
+.kanban-col.type1 .kanban-tag-pill { background: oklch(94% 0.02 240); color: oklch(42% 0.1 240); border: 1px solid oklch(88% 0.03 240); }
+.kanban-col.type1 .kanban-tag-urgent { background: oklch(96% 0.02 55); color: oklch(50% 0.1 55); border: 1px solid oklch(90% 0.03 55); }
+.kanban-col.type1 .kanban-tag-normal { background: oklch(94% 0.015 145); color: oklch(38% 0.08 145); border: 1px solid oklch(88% 0.02 145); }
+.kanban-col.type2 .kanban-tag-pill { background: oklch(94% 0.015 145); color: oklch(38% 0.08 145); border: 1px solid oklch(88% 0.02 145); }
+.kanban-col.type2 .kanban-tag-urgent { background: oklch(96% 0.02 55); color: oklch(50% 0.1 55); border: 1px solid oklch(90% 0.03 55); }
+.kanban-col.type3 .kanban-tag-pill { background: oklch(94% 0.015 240); color: oklch(42% 0.08 240); border: 1px solid oklch(88% 0.02 240); }
+.kanban-col.type3 .kanban-tag-urgent { background: oklch(96% 0.02 55); color: oklch(50% 0.1 55); border: 1px solid oklch(90% 0.03 55); }
+.kanban-col.type3 .kanban-tag-normal { background: oklch(96% 0.015 145); color: oklch(40% 0.08 145); border: 1px solid oklch(90% 0.02 145); }
+.kanban-col.type4 .kanban-tag-pill { background: oklch(94% 0.015 300); color: oklch(42% 0.08 300); border: 1px solid oklch(88% 0.02 300); }
+/* Legacy tag classes for backward compat */
+.kanban-tag-blue { background: oklch(94% 0.02 240); color: oklch(42% 0.1 240); border: 1px solid oklch(88% 0.03 240); }
+.kanban-tag-orange { background: oklch(96% 0.02 55); color: oklch(50% 0.1 55); border: 1px solid oklch(90% 0.03 55); }
+.kanban-tag-green { background: oklch(94% 0.015 145); color: oklch(38% 0.08 145); border: 1px solid oklch(88% 0.02 145); }
+
+/* ── Right AI Panel ── */
+.right-panel {
+  width: var(--right-panel-w);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.rp-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.rp-title {
+  height: 42px;
+  font-size: 13px; font-weight: 600; color: var(--fg);
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 12px;
+}
+.rp-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success); flex-shrink: 0;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.rp-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 8px 0 12px;
+}
+.rp-tab {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 120ms, border-color 120ms;
+  white-space: nowrap;
+}
+.rp-tab:hover { color: var(--fg); }
+.rp-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.rp-body {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: oklch(98.5% 0.003 280);
+}
+.rp-empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px; padding: 24px;
+}
+.rp-empty-label { font-size: 14px; font-weight: 600; color: var(--fg); }
+.rp-empty-sub { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.6; }
+
+/* Tab panels */
+.rp-tab-panel { display: none; }
+.rp-tab-panel.active { display: flex; flex-direction: column; flex: 1; overflow-y: auto; }
+
+/* Chat View */
+.rp-chat-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Detail View */
+.rp-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* Detail Header */
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: #0049f3;
+  color: #fff;
+}
+.detail-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.detail-header-id {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+.detail-header-sub {
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+}
+.detail-header-badge {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  font-family: var(--font-mono);
+  background: rgba(255,255,255,0.15);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+}
+
+/* Detail Data Rows */
+.detail-data-list {
+  background: oklch(97% 0.012 240);
+}
+.detail-data-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 16px;
+  border-bottom: 1px solid oklch(93% 0.015 240);
+  font-size: 12px;
+}
+.detail-data-row:last-child { border-bottom: none; }
+.detail-data-label {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.detail-data-value {
+  color: var(--fg);
+  font-weight: 500;
+  max-width: 55%;
+  text-align: right;
+}
+.detail-data-value.mono {
+  font-family: var(--font-mono);
+}
+
+/* Detail Text Sections */
+.detail-text-section {
+  padding: 16px;
+  background: var(--surface);
+}
+.detail-text-section + .detail-text-section {
+  border-top: 1px solid var(--border);
+}
+.detail-text-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0049f3;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.detail-text-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  background: #0049f3;
+  border-radius: 2px;
+}
+.detail-text-body {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+/* Detail Table Cards */
+.detail-table-section {
+  padding: 16px;
+  background: var(--surface);
+}
+.detail-table-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.detail-table-section-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  background: #0049f3;
+  border-radius: 2px;
+}
+.detail-table-card {
+  background: oklch(99% 0.003 60);
+  border: 1px solid oklch(93% 0.006 60);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.detail-table-card:last-child { margin-bottom: 0; }
+.detail-table-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #0049f3;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.detail-table-card-header-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  font-family: var(--font-mono);
+  background: rgba(255,255,255,0.15);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+.detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.detail-table th {
+  padding: 7px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  background: oklch(97.5% 0.002 60);
+  border-bottom: 1px solid oklch(94% 0.004 60);
+  white-space: nowrap;
+}
+.detail-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid oklch(95% 0.003 60);
+  color: var(--fg);
+  white-space: nowrap;
+}
+.detail-table tr:last-child td { border-bottom: none; }
+.detail-table td.mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.detail-table-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 7px 10px;
+  background: oklch(97% 0.002 60);
+  border-top: 1px solid oklch(94% 0.004 60);
+  font-size: 11px;
+  font-weight: 600;
+  color: #0049f3;
+  font-family: var(--font-mono);
+}
+
+.rp-footer {
+  background: var(--surface); border-top: 1px solid var(--border);
+  padding: 10px; flex-shrink: 0;
+}
+.rp-input-box {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); overflow: hidden;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.rp-input-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px oklch(58% 0.18 255 / 0.10);
+}
+.rp-textarea {
+  width: 100%; min-height: 56px; max-height: 120px; padding: 8px 10px;
+  border: none; background: transparent; font-size: 12px;
+  font-family: var(--font-body); color: var(--fg); resize: none; outline: none;
+  line-height: 1.6; display: block;
+}
+.rp-textarea::placeholder { color: var(--muted); }
+.rp-toolbar {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px 6px; border-top: 1px solid var(--border); background: var(--surface);
+}
+.rp-agent-btn {
+  display: flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px 0 5px; border-radius: 11px;
+  background: #1dc77e; border: none; color: #fff;
+  font-size: 11px; font-weight: 700; cursor: pointer;
+  transition: background 120ms; white-space: nowrap; flex-shrink: 0;
+}
+.rp-agent-btn:hover { background: #18b370; }
+.rp-agent-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.75); flex-shrink: 0; }
+.rp-agent-name { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.rp-send-btn {
+  height: 28px; padding: 0 14px; background: var(--accent);
+  color: #fff; border: none; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background 120ms; flex-shrink: 0; margin-left: auto;
+}
+.rp-send-btn:hover { background: oklch(52% 0.20 255); }
+
+/* ── Contract Todo List View ── */
+.kanban-view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.kanban-view.active { display: flex; }
+.todo-view { display: none; flex-direction: column; flex: 1; overflow-y: auto; padding: 10px; gap: 10px; }
+.todo-view.active { display: flex; }
+
+.todo-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.todo-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  background: oklch(97.5% 0.003 250);
+  border-bottom: 1px solid var(--border);
+}
+.todo-section-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--fg);
+}
+.todo-section-title::before {
+  content: ''; width: 3px; height: 14px; background: var(--accent); border-radius: 2px;
+}
+.todo-section-count {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  font-family: var(--font-mono); background: var(--neutral-bg);
+  padding: 2px 8px; border-radius: 3px;
+}
+
+.todo-table-wrap { overflow-x: auto; }
+.todo-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.todo-table th {
+  padding: 8px 12px; text-align: left; font-weight: 600;
+  color: var(--muted); background: oklch(98% 0.002 250);
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.todo-table td {
+  padding: 8px 12px; border-bottom: 1px solid oklch(96% 0.003 250);
+  color: var(--fg); vertical-align: middle;
+}
+.todo-table tr:last-child td { border-bottom: none; }
+.todo-table tr:hover td { background: oklch(98.5% 0.003 250); }
+
+.todo-id { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--accent); }
+.todo-desc { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 3px;
+  white-space: nowrap;
+}
+.badge-priority-high { background: var(--danger-bg); color: var(--danger); }
+.badge-priority-medium { background: var(--warning-bg); color: var(--warning); }
+.badge-priority-low { background: oklch(96% 0.005 250); color: var(--muted); }
+
+.badge-status-pending { background: oklch(94% 0.015 240); color: oklch(42% 0.12 240); }
+.badge-status-progress { background: var(--success-bg); color: var(--success); }
+.badge-status-overdue { background: var(--danger-bg); color: var(--danger); }
+
+.todo-action {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--accent); cursor: pointer;
+  padding: 2px 6px; border-radius: 3px; transition: background 120ms;
+  text-decoration: none;
+}
+.todo-action:hover { background: var(--accent-bg); }
+
+.todo-empty-row td {
+  text-align: center; color: var(--muted); padding: 20px;
+  font-size: 12px;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: oklch(82% 0.008 250); }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-logo">
+    <div class="topnav-logo-icon"></div>
+    订单履约控制塔
+  </div>
+  <div class="topnav-tabs">
+    <a class="topnav-tab" href="index.html">首页</a>
+    <a class="topnav-tab" href="history-analysis.html">历史分析</a>
+    <a class="topnav-tab" href="todo-list.html">任务列表<span style="background:var(--accent-bg);color:var(--accent);font-size:10px;padding:1px 5px;border-radius:3px;margin-left:2px;font-family:var(--font-mono);">42</span></a>
+    <a class="topnav-tab" href="#">系统设置</a>
+  </div>
+  <div class="topnav-right">
+    <div class="topnav-user">
+      <div class="avatar">Hi</div>
+      <span class="topnav-username">Hi·金星米</span>
+      <span class="topnav-tag">运营</span>
+    </div>
+  </div>
+</nav>
+
+<div class="sub-nav" id="subNav">
+  <div class="sub-nav-tab active" data-view="kanban" id="tabKanban">看板分析</div>
+  <div class="sub-nav-tab" data-view="todo" id="tabTodo">合同待办清单</div>
+</div>
+
+<div class="main-layout">
+
+  <!-- Left Panel: Contract List -->
+  <aside class="left-panel">
+    <div class="lp-header">
+      <div class="lp-title">合同待办清单</div>
+      <div class="lp-sort">默认排序</div>
+    </div>
+    <div class="lp-task-id" id="lpTaskId" style="display:none;">
+      <span class="lp-task-id-label">分析任务</span>
+      <span class="lp-task-id-value" id="lpTaskIdValue">--</span>
+    </div>
+    <div class="lp-list" id="lpList">
+      <div class="lp-item active" data-id="c1">
+        <input type="checkbox" class="lp-item-check" data-id="c1">
+        <div class="lp-item-body">
+          <div class="lp-item-id">SCJD20241114-K01</div>
+          <div class="lp-item-meta">中国铁制股份有限公司</div>
+          <div class="lp-item-progress">
+            <div class="lp-item-progress-label"><span>发货比例</span><strong>65%</strong></div>
+            <div class="lp-item-progress-bar"><div class="lp-item-progress-fill" style="width:65%"></div></div>
+          </div>
+        </div>
+        <span class="lp-item-status lp-status-blue">待发货</span>
+      </div>
+      <div class="lp-item" data-id="c2">
+        <input type="checkbox" class="lp-item-check" data-id="c2">
+        <div class="lp-item-body">
+          <div class="lp-item-id">SCJD20241114-K02</div>
+          <div class="lp-item-meta">华北电力设备有限公司</div>
+          <div class="lp-item-progress">
+            <div class="lp-item-progress-label"><span>发货比例</span><strong>82%</strong></div>
+            <div class="lp-item-progress-bar"><div class="lp-item-progress-fill" style="width:82%"></div></div>
+          </div>
+        </div>
+        <span class="lp-item-status lp-status-green">进行中</span>
+      </div>
+      <div class="lp-item" data-id="c3">
+        <input type="checkbox" class="lp-item-check" data-id="c3">
+        <div class="lp-item-body">
+          <div class="lp-item-id">SCJD20241114-K03</div>
+          <div class="lp-item-meta">华东精密机械制造厂</div>
+          <div class="lp-item-progress">
+            <div class="lp-item-progress-label"><span>发货比例</span><strong>30%</strong></div>
+            <div class="lp-item-progress-bar"><div class="lp-item-progress-fill" style="width:30%"></div></div>
+          </div>
+        </div>
+        <span class="lp-item-status lp-status-blue">待发货</span>
+      </div>
+      <div class="lp-item" data-id="c4">
+        <input type="checkbox" class="lp-item-check" data-id="c4">
+        <div class="lp-item-body">
+          <div class="lp-item-id">SCJD20241114-K04</div>
+          <div class="lp-item-meta">南方重工集团有限公司</div>
+          <div class="lp-item-progress">
+            <div class="lp-item-progress-label"><span>发货比例</span><strong>0%</strong></div>
+            <div class="lp-item-progress-bar"><div class="lp-item-progress-fill" style="width:0%"></div></div>
+          </div>
+        </div>
+        <span class="lp-item-status lp-status-orange">待确认</span>
+      </div>
+      <div class="lp-item" data-id="c5">
+        <input type="checkbox" class="lp-item-check" data-id="c5">
+        <div class="lp-item-body">
+          <div class="lp-item-id">SCJD20241114-K05</div>
+          <div class="lp-item-meta">西部矿业股份有限公司</div>
+          <div class="lp-item-progress">
+            <div class="lp-item-progress-label"><span>发货比例</span><strong>45%</strong></div>
+            <div class="lp-item-progress-bar"><div class="lp-item-progress-fill" style="width:45%"></div></div>
+          </div>
+        </div>
+        <span class="lp-item-status lp-status-green">进行中</span>
+      </div>
+    </div>
+    <div class="lp-footer">
+      <button class="lp-action-btn" id="genTodoBtn">生成待办清单</button>
+    </div>
+  </aside>
+
+  <!-- Center: Analysis Result -->
+  <div class="center-content">
+
+    <!-- KANBAN VIEW -->
+    <div class="kanban-view active" id="kanbanView" style="flex-direction:column;flex:1;overflow:hidden;">
+      <!-- Title Card -->
+      <div class="title-card">
+        <div class="title-card-left">
+          <div class="title-card-info">
+            <h2>中国铁制股份有限公司 华北大区 / 安徽</h2>
+            <p>合同编号：SCJD20241114-K01 · 2024/11/14 下单 · 销售员：李明</p>
+          </div>
+        </div>
+        <div class="title-card-amount">
+          <div class="amt">1,558.00</div>
+          <div class="amt-label">万元</div>
+        </div>
+      </div>
+
+      <!-- Metric Cards -->
+      <div class="metrics-row">
+        <div class="metric-card">
+          <div class="metric-card-label">预约比例</div>
+          <div class="metric-card-value">0%</div>
+          <div class="metric-card-bar"><div class="metric-card-fill" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-card-label">服务比例</div>
+          <div class="metric-card-value">0%</div>
+          <div class="metric-card-bar"><div class="metric-card-fill" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-card-label">出库比例</div>
+          <div class="metric-card-value">0%</div>
+          <div class="metric-card-bar"><div class="metric-card-fill" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-card-label">结算比例</div>
+          <div class="metric-card-value">0%</div>
+          <div class="metric-card-bar"><div class="metric-card-fill" style="width:0%"></div></div>
+        </div>
+      </div>
+
+      <!-- Kanban Board -->
+      <div class="kanban-board">
+
+        <!-- Col 1 -->
+        <div class="kanban-col type1">
+          <div class="kanban-col-header">
+            <span class="kanban-col-title">问题类型1-未接发货</span>
+            <span class="kanban-col-count">6</span>
+          </div>
+          <div class="kanban-col-body">
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">CCU-2000 控制系统 · 断路器控制板 · 编号：HT001241</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待处理</span>
+                <span class="kanban-card-tag kanban-tag-urgent">紧急</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">SCU-1500 变频器单元 · 逆变模块 · 编号：HT002402</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待处理</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">MCU-800 主控单元 · 电源管理板 · 编号：HT001503</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待处理</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">DCU-300 驱动控制 · 编码器接口 · 编号：HT002104</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待处理</span>
+                <span class="kanban-card-tag kanban-tag-normal">常规</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">IOU-120 输入输出模块 · 继电器板 · 编号：HT001805</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待处理</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">PSU-500 电源单元 · 整流模块 · 编号：HT002306</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待处理</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Col 2 -->
+        <div class="kanban-col type2">
+          <div class="kanban-col-header">
+            <span class="kanban-col-title">问题类型2-入库登记</span>
+            <span class="kanban-col-count">3</span>
+          </div>
+          <div class="kanban-col-body">
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">CCU-2000 控制系统 · 断路器控制板 · 编号：HT001241</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待入库</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">SCU-1500 变频器单元 · 逆变模块 · 编号：HT002402</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待入库</span>
+                <span class="kanban-card-tag kanban-tag-urgent">加急</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">MCU-800 主控单元 · 电源管理板 · 编号：HT001503</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待入库</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Col 3 -->
+        <div class="kanban-col type3">
+          <div class="kanban-col-header">
+            <span class="kanban-col-title">问题类型3-发货方式存在问题</span>
+            <span class="kanban-col-count">6</span>
+          </div>
+          <div class="kanban-col-body">
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">CCU-2000 控制系统 · 断路器控制板 · 编号：HT001241</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待确认</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">SCU-1500 变频器单元 · 逆变模块 · 编号：HT002402</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待确认</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">MCU-800 主控单元 · 电源管理板 · 编号：HT001503</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待确认</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">DCU-300 驱动控制 · 编码器接口 · 编号：HT002104</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待确认</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">IOU-120 输入输出模块 · 继电器板 · 编号：HT001805</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待确认</span>
+                <span class="kanban-card-tag kanban-tag-urgent">需协调</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">PSU-500 电源单元 · 整流模块 · 编号：HT002306</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待确认</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Col 4 -->
+        <div class="kanban-col type4">
+          <div class="kanban-col-header">
+            <span class="kanban-col-title">问题类型4-未知问题</span>
+            <span class="kanban-col-count">4</span>
+          </div>
+          <div class="kanban-col-body">
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">CCU-2000 控制系统 · 断路器控制板 · 编号：HT001241</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待排查</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">SCU-1500 变频器单元 · 逆变模块 · 编号：HT002402</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待排查</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">MCU-800 主控单元 · 电源管理板 · 编号：HT001503</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待排查</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="kanban-card-id">SCJD20241114-K01</div>
+              <div class="kanban-card-text">DCU-300 驱动控制 · 编码器接口 · 编号：HT002104</div>
+              <div class="kanban-card-tags">
+                <span class="kanban-card-tag kanban-tag-pill">待排查</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- TODO LIST VIEW -->
+    <div class="todo-view" id="todoView">
+
+      <!-- Section: 发货任务 -->
+      <div class="todo-section">
+        <div class="todo-section-header">
+          <div class="todo-section-title">发货任务</div>
+          <span class="todo-section-count">6</span>
+        </div>
+        <div class="todo-table-wrap">
+          <table class="todo-table">
+            <thead>
+              <tr>
+                <th>任务编号</th>
+                <th>任务说明</th>
+                <th>优先级</th>
+                <th>负责人</th>
+                <th>截止日期</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="todo-id">T-SH-001</span></td>
+                <td class="todo-desc">CCU-2000 控制系统断路器控制板发货确认</td>
+                <td><span class="badge badge-priority-high">高</span></td>
+                <td>李明</td>
+                <td>2024-11-18</td>
+                <td><span class="badge badge-status-pending">待处理</span></td>
+                <td><a class="todo-action" href="task-agent.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-SH-002</span></td>
+                <td class="todo-desc">SCU-1500 变频器单元逆变模块出库核对</td>
+                <td><span class="badge badge-priority-medium">中</span></td>
+                <td>张伟</td>
+                <td>2024-11-20</td>
+                <td><span class="badge badge-status-progress">进行中</span></td>
+                <td><a class="todo-action" href="task-agent.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-SH-003</span></td>
+                <td class="todo-desc">MCU-800 主控单元电源管理板物流安排</td>
+                <td><span class="badge badge-priority-medium">中</span></td>
+                <td>王芳</td>
+                <td>2024-11-19</td>
+                <td><span class="badge badge-status-pending">待处理</span></td>
+                <td><a class="todo-action" href="task-agent.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-SH-004</span></td>
+                <td class="todo-desc">DCU-300 驱动控制编码器接口发货方式确认</td>
+                <td><span class="badge badge-priority-low">低</span></td>
+                <td>刘洋</td>
+                <td>2024-11-22</td>
+                <td><span class="badge badge-status-pending">待处理</span></td>
+                <td><a class="todo-action" href="task-decision.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-SH-005</span></td>
+                <td class="todo-desc">IOU-120 输入输出模块继电器板配送协调</td>
+                <td><span class="badge badge-priority-high">高</span></td>
+                <td>陈静</td>
+                <td>2024-11-17</td>
+                <td><span class="badge badge-status-overdue">已逾期</span></td>
+                <td><a class="todo-action" href="task-agent.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-SH-006</span></td>
+                <td class="todo-desc">PSU-500 电源单元整流模块直发客户确认</td>
+                <td><span class="badge badge-priority-medium">中</span></td>
+                <td>李明</td>
+                <td>2024-11-21</td>
+                <td><span class="badge badge-status-pending">待处理</span></td>
+                <td><a class="todo-action" href="task-decision.html">处理</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section: 入库任务 -->
+      <div class="todo-section">
+        <div class="todo-section-header">
+          <div class="todo-section-title">入库任务</div>
+          <span class="todo-section-count">3</span>
+        </div>
+        <div class="todo-table-wrap">
+          <table class="todo-table">
+            <thead>
+              <tr>
+                <th>任务编号</th>
+                <th>任务说明</th>
+                <th>优先级</th>
+                <th>负责人</th>
+                <th>截止日期</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="todo-id">T-RK-001</span></td>
+                <td class="todo-desc">CCU-2000 控制系统入库登记与质检</td>
+                <td><span class="badge badge-priority-medium">中</span></td>
+                <td>赵强</td>
+                <td>2024-11-19</td>
+                <td><span class="badge badge-status-pending">待入库</span></td>
+                <td><a class="todo-action" href="task-manual.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-RK-002</span></td>
+                <td class="todo-desc">SCU-1500 变频器单元加急入库确认</td>
+                <td><span class="badge badge-priority-high">高</span></td>
+                <td>孙丽</td>
+                <td>2024-11-16</td>
+                <td><span class="badge badge-status-overdue">已逾期</span></td>
+                <td><a class="todo-action" href="task-manual.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-RK-003</span></td>
+                <td class="todo-desc">MCU-800 主控单元电源管理板入库上架</td>
+                <td><span class="badge badge-priority-low">低</span></td>
+                <td>周涛</td>
+                <td>2024-11-23</td>
+                <td><span class="badge badge-status-pending">待入库</span></td>
+                <td><a class="todo-action" href="task-manual.html">处理</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section: 合同确认 -->
+      <div class="todo-section">
+        <div class="todo-section-header">
+          <div class="todo-section-title">合同确认</div>
+          <span class="todo-section-count">4</span>
+        </div>
+        <div class="todo-table-wrap">
+          <table class="todo-table">
+            <thead>
+              <tr>
+                <th>任务编号</th>
+                <th>任务说明</th>
+                <th>优先级</th>
+                <th>负责人</th>
+                <th>截止日期</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="todo-id">T-HT-001</span></td>
+                <td class="todo-desc">SCJD20241114-K01 合同发货条款二次确认</td>
+                <td><span class="badge badge-priority-high">高</span></td>
+                <td>李明</td>
+                <td>2024-11-17</td>
+                <td><span class="badge badge-status-overdue">已逾期</span></td>
+                <td><a class="todo-action" href="task-decision.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-HT-002</span></td>
+                <td class="todo-desc">华北电力设备合同付款节点审核</td>
+                <td><span class="badge badge-priority-medium">中</span></td>
+                <td>张伟</td>
+                <td>2024-11-20</td>
+                <td><span class="badge badge-status-pending">待确认</span></td>
+                <td><a class="todo-action" href="task-decision.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-HT-003</span></td>
+                <td class="todo-desc">华东精密机械合同交付日期变更协商</td>
+                <td><span class="badge badge-priority-high">高</span></td>
+                <td>王芳</td>
+                <td>2024-11-18</td>
+                <td><span class="badge badge-status-pending">待确认</span></td>
+                <td><a class="todo-action" href="task-decision.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-HT-004</span></td>
+                <td class="todo-desc">南方重工合同补充协议签署</td>
+                <td><span class="badge badge-priority-low">低</span></td>
+                <td>刘洋</td>
+                <td>2024-11-25</td>
+                <td><span class="badge badge-status-pending">待确认</span></td>
+                <td><a class="todo-action" href="task-decision.html">处理</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section: 异常处理 -->
+      <div class="todo-section">
+        <div class="todo-section-header">
+          <div class="todo-section-title">异常处理</div>
+          <span class="todo-section-count">4</span>
+        </div>
+        <div class="todo-table-wrap">
+          <table class="todo-table">
+            <thead>
+              <tr>
+                <th>任务编号</th>
+                <th>任务说明</th>
+                <th>优先级</th>
+                <th>负责人</th>
+                <th>截止日期</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="todo-id">T-YC-001</span></td>
+                <td class="todo-desc">CCU-2000 控制系统断路器控制板质量问题排查</td>
+                <td><span class="badge badge-priority-high">高</span></td>
+                <td>赵强</td>
+                <td>2024-11-16</td>
+                <td><span class="badge badge-status-overdue">已逾期</span></td>
+                <td><a class="todo-action" href="task-agent.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-YC-002</span></td>
+                <td class="todo-desc">SCU-1500 变频器单元逆变模块型号不符核实</td>
+                <td><span class="badge badge-priority-high">高</span></td>
+                <td>孙丽</td>
+                <td>2024-11-17</td>
+                <td><span class="badge badge-status-overdue">已逾期</span></td>
+                <td><a class="todo-action" href="task-agent.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-YC-003</span></td>
+                <td class="todo-desc">MCU-800 主控单元电源管理板缺货替代方案</td>
+                <td><span class="badge badge-priority-medium">中</span></td>
+                <td>周涛</td>
+                <td>2024-11-21</td>
+                <td><span class="badge badge-status-pending">待排查</span></td>
+                <td><a class="todo-action" href="task-decision.html">处理</a></td>
+              </tr>
+              <tr>
+                <td><span class="todo-id">T-YC-004</span></td>
+                <td class="todo-desc">DCU-300 驱动控制编码器接口兼容性问题</td>
+                <td><span class="badge badge-priority-medium">中</span></td>
+                <td>李明</td>
+                <td>2024-11-22</td>
+                <td><span class="badge badge-status-pending">待排查</span></td>
+                <td><a class="todo-action" href="task-agent.html">处理</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Right AI Panel -->
+  <aside class="right-panel" id="rightPanel">
+    <div class="rp-header">
+      <div class="rp-title">
+        <span class="rp-dot"></span>
+        AI专属助手
+      </div>
+      <div class="rp-tabs">
+        <div class="rp-tab active" data-tab="chat">开始工作</div>
+        <div class="rp-tab" data-tab="detail" id="detailTab">看板详情</div>
+      </div>
+    </div>
+    <div class="rp-body">
+      <!-- Chat Tab -->
+      <div class="rp-tab-panel active" id="chatView">
+        <div class="rp-chat-view">
+          <div class="rp-empty">
+            <div class="rp-empty-label">别来无恙！</div>
+            <div class="rp-empty-sub">选择订单加入对话，<br>或直接向助手提问。</div>
+          </div>
+        </div>
+      </div>
+      <!-- Detail Tab -->
+      <div class="rp-tab-panel rp-detail" id="detailView">
+
+        <!-- Detail Header -->
+        <div class="detail-header">
+          <div class="detail-header-left">
+            <div class="detail-header-id" id="detailHeaderId">244221004</div>
+            <div class="detail-header-sub">运营指标</div>
+          </div>
+          <div class="detail-header-badge">BPM</div>
+        </div>
+
+        <!-- Data List -->
+        <div class="detail-data-list">
+          <div class="detail-data-row">
+            <span class="detail-data-label">需求属性</span>
+            <span class="detail-data-value" id="detailAttr">--</span>
+          </div>
+          <div class="detail-data-row">
+            <span class="detail-data-label">需求类别</span>
+            <span class="detail-data-value" id="detailCategory">--</span>
+          </div>
+          <div class="detail-data-row">
+            <span class="detail-data-label">品牌</span>
+            <span class="detail-data-value" id="detailBrand">--</span>
+          </div>
+          <div class="detail-data-row">
+            <span class="detail-data-label">需求系列描述</span>
+            <span class="detail-data-value" id="detailSeries">--</span>
+          </div>
+          <div class="detail-data-row">
+            <span class="detail-data-label">需求定制产品</span>
+            <span class="detail-data-value" id="detailCustom">--</span>
+          </div>
+          <div class="detail-data-row">
+            <span class="detail-data-label">发货申请/发货方式</span>
+            <span class="detail-data-value" id="detailShipType">--</span>
+          </div>
+        </div>
+
+        <!-- 发货路径解析 -->
+        <div class="detail-text-section">
+          <div class="detail-text-title">发货路径解析</div>
+          <div class="detail-text-body" id="detailPathDesc">
+            该合同发货路径较为复杂，涉及多级仓库调拨。当前货物已从主仓库发出，正在运往区域中转仓，预计2-3个工作日内到达客户指定地点。建议关注中转仓的入库确认节点，以确保后续配送安排。
+          </div>
+        </div>
+
+        <!-- 风险解析与建议 -->
+        <div class="detail-text-section">
+          <div class="detail-text-title">风险解析与建议</div>
+          <div class="detail-text-body" id="detailRiskDesc">
+            当前合同履约进度为65%，发货延迟风险较高。主要原因是部分定制物料采购周期超出预期，建议：1）与供应商确认交货时间并制定备选方案；2）提前与客户沟通可能的延期情况；3）考虑部分发货方案以减少整体延误影响。
+          </div>
+        </div>
+
+        <!-- 交付路径展示 -->
+        <div class="detail-table-section">
+          <div class="detail-table-section-title">交付路径展示</div>
+
+          <!-- 销售合同订单 -->
+          <div class="detail-table-card">
+            <div class="detail-table-card-header">
+              <span>销售合同订单</span>
+              <span class="detail-table-card-header-badge">BPM</span>
+            </div>
+            <table class="detail-table">
+              <thead>
+                <tr>
+                  <th>凭证号</th>
+                  <th>单据状态</th>
+                  <th>行号</th>
+                  <th>红蓝字</th>
+                  <th>数量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="mono">SO_20240001</td>
+                  <td>生效</td>
+                  <td class="mono">10</td>
+                  <td>蓝字</td>
+                  <td>100</td>
+                </tr>
+                <tr>
+                  <td class="mono">SO_20240002</td>
+                  <td>生效</td>
+                  <td class="mono">01</td>
+                  <td>蓝字</td>
+                  <td>50</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 发货申请单 -->
+          <div class="detail-table-card">
+            <div class="detail-table-card-header">
+              <span>发货申请单</span>
+              <span class="detail-table-card-header-badge">BPM</span>
+            </div>
+            <table class="detail-table">
+              <thead>
+                <tr>
+                  <th>凭证号</th>
+                  <th>单据状态</th>
+                  <th>行号</th>
+                  <th>红蓝字</th>
+                  <th>数量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="mono">SA_20240001</td>
+                  <td>审核中</td>
+                  <td class="mono">10</td>
+                  <td>蓝字</td>
+                  <td>100</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 销售出库单 -->
+          <div class="detail-table-card">
+            <div class="detail-table-card-header">
+              <span>销售出库单</span>
+              <span class="detail-table-card-header-badge">SAP</span>
+            </div>
+            <table class="detail-table">
+              <thead>
+                <tr>
+                  <th>凭证号</th>
+                  <th>单据状态</th>
+                  <th>行号</th>
+                  <th>红蓝字</th>
+                  <th>数量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="mono">DN_20240001</td>
+                  <td>已过账</td>
+                  <td class="mono">10</td>
+                  <td>蓝字</td>
+                  <td>80</td>
+                </tr>
+                <tr>
+                  <td class="mono">DN_20240002</td>
+                  <td>待过账</td>
+                  <td class="mono">20</td>
+                  <td>蓝字</td>
+                  <td>20</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 销售交货单 -->
+          <div class="detail-table-card">
+            <div class="detail-table-card-header">
+              <span>销售交货单</span>
+              <span class="detail-table-card-header-badge">BPM</span>
+            </div>
+            <table class="detail-table">
+              <thead>
+                <tr>
+                  <th>凭证号</th>
+                  <th>单据状态</th>
+                  <th>行号</th>
+                  <th>红蓝字</th>
+                  <th>数量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="mono">DL_20240001</td>
+                  <td>待确认</td>
+                  <td class="mono">10</td>
+                  <td>蓝字</td>
+                  <td>80</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+    <div class="rp-footer">
+      <div class="rp-input-box">
+        <textarea class="rp-textarea" placeholder="-请输入-"></textarea>
+        <div class="rp-toolbar">
+          <button class="rp-agent-btn">Agent</button>
+          <span class="rp-agent-name">产品型销售订单确认收入智能体</span>
+          <button class="rp-send-btn">发送</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+// Contract list checkbox interaction
+const lpList = document.getElementById('lpList');
+const genTodoBtn = document.getElementById('genTodoBtn');
+
+lpList.addEventListener('click', e => {
+  const checkbox = e.target.closest('.lp-item-check');
+  if (checkbox) {
+    e.stopPropagation();
+    const item = checkbox.closest('.lp-item');
+    item.classList.toggle('selected', checkbox.checked);
+    updateGenButton();
+    return;
+  }
+
+  const item = e.target.closest('.lp-item');
+  if (item) {
+    document.querySelectorAll('.lp-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+  }
+});
+
+function updateGenButton() {
+  const checked = lpList.querySelectorAll('.lp-item-check:checked');
+  if (checked.length > 0) {
+    genTodoBtn.textContent = `生成待办清单 (${checked.length})`;
+  } else {
+    genTodoBtn.textContent = '生成待办清单';
+  }
+}
+
+genTodoBtn.addEventListener('click', () => {
+  const checked = lpList.querySelectorAll('.lp-item-check:checked');
+  if (checked.length === 0) {
+    alert('请至少选择一项合同');
+    return;
+  }
+  switchView('todo');
+});
+
+// ── Right Panel Tabs & Kanban Card Detail ──
+const rpTabs = document.querySelectorAll('.rp-tab');
+const chatView = document.getElementById('chatView');
+const detailView = document.getElementById('detailView');
+const detailTab = document.getElementById('detailTab');
+
+// Detail fields
+const dHeaderId = document.getElementById('detailHeaderId');
+const dAttr = document.getElementById('detailAttr');
+const dCategory = document.getElementById('detailCategory');
+const dBrand = document.getElementById('detailBrand');
+const dSeries = document.getElementById('detailSeries');
+const dCustom = document.getElementById('detailCustom');
+const dShipType = document.getElementById('detailShipType');
+const dPathDesc = document.getElementById('detailPathDesc');
+const dRiskDesc = document.getElementById('detailRiskDesc');
+
+// Tab switching
+rpTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    rpTabs.forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+
+    const target = tab.dataset.tab;
+    document.querySelectorAll('.rp-tab-panel').forEach(p => p.classList.remove('active'));
+    if (target === 'chat') {
+      chatView.classList.add('active');
+    } else if (target === 'detail') {
+      detailView.classList.add('active');
+    }
+  });
+});
+
+// Contract data map
+const contractData = {
+  'SCJD20241114-K01': { company: '中国铁制股份有限公司', sales: '李明', amount: '1,558.00万元', progress: 65 },
+  'SCJD20241114-K02': { company: '华北电力设备有限公司', sales: '张伟', amount: '1,380.00万元', progress: 82 },
+  'SCJD20241114-K03': { company: '华东精密机械制造厂', sales: '王芳', amount: '875.00万元', progress: 30 },
+  'SCJD20241114-K04': { company: '南方重工集团有限公司', sales: '刘洋', amount: '1,460.00万元', progress: 0 },
+  'SCJD20241114-K05': { company: '西部矿业股份有限公司', sales: '陈静', amount: '1,280.00万元', progress: 45 }
+};
+
+// Kanban card click → show detail in right panel
+document.querySelectorAll('.kanban-card').forEach(card => {
+  card.addEventListener('click', () => {
+    const cardId = card.dataset.id || 'SCJD20241114-K01';
+    const data = contractData[cardId] || contractData['SCJD20241114-K01'];
+
+    dHeaderId.textContent = cardId;
+    dAttr.textContent = data.sales;
+    dCategory.textContent = data.company;
+    dBrand.textContent = data.company;
+    dSeries.textContent = '产品型';
+    dCustom.textContent = '定制';
+    dShipType.textContent = '直发客户';
+    dPathDesc.textContent = 'CCU-2000 控制系统断路器控制板，编号 HT001241，待处理';
+    dRiskDesc.textContent = '发货进度滞后，建议优先协调物流资源';
+
+    rpTabs.forEach(t => t.classList.remove('active'));
+    detailTab.classList.add('active');
+    document.querySelectorAll('.rp-tab-panel').forEach(p => p.classList.remove('active'));
+    detailView.classList.add('active');
+  });
+});
+
+// ── Analysis Task Completion ──
+(function completeAnalysisTask() {
+  const currentId = localStorage.getItem('currentAnalysisTaskId');
+  if (!currentId) return;
+  const tasks = JSON.parse(localStorage.getItem('analysisTasks') || '[]');
+  const task = tasks.find(t => t.id === currentId);
+  if (task && task.status === '处理中') {
+    const now = new Date();
+    task.status = '已完成';
+    task.completedAt = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    localStorage.setItem('analysisTasks', JSON.stringify(tasks));
+  }
+  localStorage.removeItem('currentAnalysisTaskId');
+})();
+
+// ── Sub-nav View Switching ──
+const kanbanView = document.getElementById('kanbanView');
+const todoView = document.getElementById('todoView');
+const tabKanban = document.getElementById('tabKanban');
+const tabTodo = document.getElementById('tabTodo');
+
+function switchView(view) {
+  if (view === 'kanban') {
+    kanbanView.classList.add('active');
+    todoView.classList.remove('active');
+    tabKanban.classList.add('active');
+    tabTodo.classList.remove('active');
+    genTodoBtn.textContent = '生成待办清单';
+  } else {
+    kanbanView.classList.remove('active');
+    todoView.classList.add('active');
+    tabKanban.classList.remove('active');
+    tabTodo.classList.add('active');
+    const checked = lpList.querySelectorAll('.lp-item-check:checked');
+    genTodoBtn.textContent = checked.length > 0 ? `生成待办清单 (${checked.length})` : '生成待办清单';
+  }
+}
+
+tabKanban.addEventListener('click', () => switchView('kanban'));
+tabTodo.addEventListener('click', () => switchView('todo'));
+
+// ── Display Analysis Task ID ──
+(function displayAnalysisTaskId() {
+  const tasks = JSON.parse(localStorage.getItem('analysisTasks') || '[]');
+  const latestTask = tasks.find(t => t.status === '已完成');
+  if (latestTask && latestTask.id) {
+    const el = document.getElementById('lpTaskId');
+    const val = document.getElementById('lpTaskIdValue');
+    if (el && val) {
+      val.textContent = latestTask.id;
+      el.style.display = 'flex';
+    }
+  }
+})();
+</script>
+
+</body>
+</html>

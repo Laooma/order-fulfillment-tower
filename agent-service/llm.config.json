@@ -1,0 +1,32 @@
+{
+  "providers": [
+    {
+      "name": "DeepSeek",
+      "apiKey": "sk-f97d901a02f24799abd3a57cde070ed3",
+      "apiUrl": "https://api.deepseek.com/v1/chat/completions",
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "name": "deepseek-chat",
+          "tag": "deepseek-chat",
+          "contextWindow": 128000
+        },
+        {
+          "id": "deepseek-reasoner",
+          "name": "DeepSeek R1",
+          "tag": "DeepSeek",
+          "deepThinking": true,
+          "contextWindow": 128000
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "name": "deepseek-v4-flash",
+          "tag": "deepseek-v4-flash",
+          "deepThinking": false,
+          "contextWindow": 128000
+        }
+      ]
+    }
+  ],
+  "defaultModel": "deepseek-chat"
+}
