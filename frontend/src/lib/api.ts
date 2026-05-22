@@ -116,6 +116,15 @@ export interface CronTask {
   updatedAt: string
 }
 
+export interface ToolConfig {
+  name: string
+  description: string
+  enabled: boolean
+  source: 'built-in' | 'mcp'
+  mcpServer?: string
+  parameters?: Record<string, unknown>
+}
+
 export const api = {
   auth: {
     login: (username: string, password: string) =>
@@ -130,6 +139,10 @@ export const api = {
     list: (params?: Record<string, string>) =>
       request<PaginatedResponse<any>>(`/orders?${new URLSearchParams(params).toString()}`),
     get: (id: string) => request<any>(`/orders/${id}`),
+  },
+  cabinetPackages: {
+    list: (params?: Record<string, string>) =>
+      request<PaginatedResponse<any>>(`/cabinet-packages?${new URLSearchParams(params).toString()}`),
   },
   tasks: {
     list: (params?: Record<string, string>) =>
@@ -191,9 +204,15 @@ export const api = {
       agentRequest<{ success: boolean }>(`/cron-tasks/${id}`, { method: 'DELETE' }),
     runCronTask: (id: string) =>
       agentRequest<{ success: boolean; output?: string; error?: string }>(`/cron-tasks/${id}/run`, { method: 'POST' }),
+    tools: () => agentRequest<{ tools: ToolConfig[] }>('/tools'),
+    tool: (name: string) => agentRequest<{ tool: ToolConfig }>(`/tools/${encodeURIComponent(name)}`),
+    saveTool: (name: string, data: { enabled?: boolean; description?: string }) =>
+      agentRequest<{ success: boolean }>(`/tools/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(data) }),
+    tasks: (sessionId: string) => agentRequest<{ data: Array<{ id: string; content: string; status: string; blockedBy?: string[]; verified?: boolean }> }>(`/tasks/${sessionId}`),
   },
   chat: {
-    list: (sessionId: string) => request<{ data: Array<{ id: number; role: string; content: string; created_at: string }> }>(`/chat/${sessionId}`),
+    sessions: () => request<{ data: Array<{ id: string; title: string; created_at: string; updated_at: string }> }>('/chat/sessions'),
+    list: (sessionId: string) => request<{ data: Array<{ id: number; role: string; content: string; tool_call_id: string; tool_calls_json: string; created_at: string }> }>(`/chat/${sessionId}`),
     save: (sessionId: string, role: string, content: string) => request<{ success: boolean }>(`/chat/${sessionId}`, { method: 'POST', body: JSON.stringify({ role, content }) }),
     saveBatch: (sessionId: string, messages: Array<{ role: string; content: string }>) => request<{ success: boolean; count: number }>(`/chat/${sessionId}/batch`, { method: 'POST', body: JSON.stringify({ messages }) }),
   },

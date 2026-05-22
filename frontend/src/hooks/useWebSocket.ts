@@ -4,10 +4,12 @@ export interface TodoItem {
   id: string
   content: string
   status: 'pending' | 'in_progress' | 'completed'
+  blockedBy?: string[]
+  verified?: boolean
 }
 
 export interface WsMessage {
-  type: 'chat' | 'abort' | 'chunk' | 'complete' | 'stopped' | 'error' | 'skill_assigned' | 'tool_call' | 'tool_result' | 'status' | 'todo_list' | 'a2ui_surface'
+  type: 'chat' | 'abort' | 'chunk' | 'complete' | 'stopped' | 'error' | 'skill_assigned' | 'tool_call' | 'tool_result' | 'status' | 'todo_list' | 'a2ui_surface' | 'task_boundary'
   sessionId?: string
   skillId?: string
   autoAssign?: boolean
@@ -19,7 +21,11 @@ export interface WsMessage {
   redirect?: string
   hasStructuredResult?: boolean
   orders?: string[]
+  images?: Array<{ dataUrl: string; name: string }>
   taskId?: string
+  taskContent?: string
+  verified?: boolean
+  verificationNote?: string
   assignedSkillId?: string
   assignedSkillName?: string
   toolName?: string
@@ -39,6 +45,9 @@ export interface WsMessage {
   errorMessage?: string
   todos?: TodoItem[]
   action?: 'create' | 'update'
+  incompleteTasks?: string[]
+  messages?: Array<{ role: string; content: string }>
+  title?: string
 }
 
 export function useWebSocket(url: string) {

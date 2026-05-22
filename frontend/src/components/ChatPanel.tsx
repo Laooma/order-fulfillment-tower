@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { cn } from '../lib/utils'
 import { api, type Skill } from '../lib/api'
 import { useWebSocket } from '../hooks/useWebSocket'
@@ -36,10 +37,13 @@ interface ToolCallRecord {
 }
 
 interface Message {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'task_boundary'
   content: string
   thinking?: string
   toolCalls?: ToolCallRecord[]
+  taskId?: string
+  taskContent?: string
+  verified?: boolean
 }
 
 export interface ChatPanelHandle {
@@ -71,13 +75,16 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [todos, setTodos] = useState<TodoItem[]>([])
   const [taskOutputs, setTaskOutputs] = useState<Record<string, string>>({})
+  const [incompleteTaskWarnings, setIncompleteTaskWarnings] = useState<string[]>([])
+  const [attachedImages, setAttachedImages] = useState<Array<{ id: string; dataUrl: string; name: string }>>([])
+  const [isDragOver, setIsDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const elapsedTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const currentResponseRef = useRef('')
   const thinkingContentRef = useRef('')
   const [toolCallHistory, setToolCallHistory] = useState<ToolCallRecord[]>([])
   const [rightPanelWidth, setRightPanelWidth] = useState(Math.round(window.innerWidth * 0.25))
   const [collapsed, setCollapsed] = useState(false)
-  const [todoPanelCollapsed, setTodoPanelCollapsed] = useState(false)
   const [expandedThinking, setExpandedThinking] = useState<Set<number>>(new Set())
   const [localTab, setLocalTab] = useState<'chat' | 'editor'>('chat')
   const [editorLang, setEditorLang] = useState('')
@@ -108,7 +115,8 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const onA2uiSurface = pageConfig?.onA2uiSurface
   const orders = pageConfig?.orders
   const onClearOrders = pageConfig?.onClearOrders
-  const sessionId = useRef(`global-${Date.now()}`).current
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID())
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const WS_URL = (import.meta.env.VITE_AGENT_BASE_URL || 'http://localhost:3002').replace(/^http/, 'ws') + '/ws/agent'
   const { messages: wsMessages, send: wsSend } = useWebSocket(WS_URL)
@@ -120,6 +128,8 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const chatMessagesRef = useRef<HTMLDivElement>(null)
   const userScrolledUpTodo = useRef(false)
   const userScrolledUpChat = useRef(false)
+
+  const needsNewMessageRef = useRef(false)
 
   const showChat = !tabs || activeTab === 'chat'
 
@@ -184,19 +194,17 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       if (msg.type === 'chunk' && msg.content !== undefined) {
         const chunkContent = msg.content
         currentResponseRef.current += chunkContent
-        // During 'thinking' phase, accumulate into thinking content
-        if (streamStatus === 'thinking') {
-          thinkingContentRef.current += chunkContent
-        } else {
-          // During 'responding' or other phase, append to message content
-          setMessages((prev) => {
-            const lastMsg = prev[prev.length - 1]
-            if (lastMsg?.role === 'assistant') {
-              return [...prev.slice(0, -1), { ...lastMsg, content: lastMsg.content + chunkContent }]
-            }
+        setMessages((prev) => {
+          if (needsNewMessageRef.current) {
+            needsNewMessageRef.current = false
             return [...prev, { role: 'assistant', content: chunkContent }]
-          })
-        }
+          }
+          const lastMsg = prev[prev.length - 1]
+          if (lastMsg?.role === 'assistant') {
+            return [...prev.slice(0, -1), { ...lastMsg, content: lastMsg.content + chunkContent }]
+          }
+          return [...prev, { role: 'assistant', content: chunkContent }]
+        })
         if (msg.taskId) {
           setTaskOutputs((prev) => ({
             ...prev,
@@ -231,6 +239,10 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         setStatusMessage(label)
         setStreamStatus('calling_tool')
         setMessages((prev) => {
+          if (needsNewMessageRef.current) {
+            needsNewMessageRef.current = false
+            return [...prev, { role: 'assistant', content: '', toolCalls: [newTc] }]
+          }
           const lastMsg = prev[prev.length - 1]
           if (lastMsg?.role === 'assistant') {
             return [...prev.slice(0, -1), { ...lastMsg, toolCalls: [...(lastMsg.toolCalls || []), newTc] }]
@@ -298,13 +310,12 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         if (msg.hasStructuredResult) {
           onAnalysisComplete?.(msg.analysisId || '')
         }
+        if (msg.incompleteTasks && msg.incompleteTasks.length > 0) {
+          setIncompleteTaskWarnings(msg.incompleteTasks)
+        }
       }
       if (msg.type === 'todo_list' && msg.todos) {
         setTodos(msg.todos)
-        // Auto-expand the todo panel when new tasks arrive
-        if (msg.todos.length > 0) {
-          setTodoPanelCollapsed(false)
-        }
         setTaskOutputs((prev) => {
           const keepIds = new Set(msg.todos!.map((t) => t.id))
           const next: Record<string, string> = {}
@@ -313,6 +324,19 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
           }
           return next
         })
+      }
+      if (msg.type === 'task_boundary') {
+        // Tag the current assistant message with task metadata
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1]
+          if (lastMsg?.role === 'assistant') {
+            return [...prev.slice(0, -1), { ...lastMsg, taskId: msg.taskId, taskContent: msg.taskContent, verified: msg.verified }]
+          }
+          return prev
+        })
+        // Push a special separator message so the next chunk naturally creates a new bubble
+        setMessages((prev) => [...prev, { role: 'task_boundary' as any, content: '', taskId: msg.taskId, taskContent: msg.taskContent, verified: msg.verified }])
+        needsNewMessageRef.current = true
       }
       if (msg.type === 'a2ui_surface' && msg.messages) {
         onA2uiSurface?.({ title: msg.title || 'AI分析结果', messages: msg.messages })
@@ -429,6 +453,25 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     document.body.style.userSelect = 'none'
   }
 
+  const readFilesAsImages = (files: FileList | File[]) => {
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
+    if (imageFiles.length === 0) return
+    for (const file of imageFiles) {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        const id = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        setAttachedImages((prev) => [...prev, { id, dataUrl, name: file.name }])
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const removeImage = (id: string) => {
+    setAttachedImages((prev) => prev.filter((img) => img.id !== id))
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const doSend = useCallback((message: string, opts?: { taskId?: string; orders?: string[] }) => {
     if (isSending) return
     setIsSending(true)
@@ -443,6 +486,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     setTaskOutputs({})
     currentResponseRef.current = ''
     thinkingContentRef.current = ''
+    needsNewMessageRef.current = false
 
     const start = Date.now()
     if (elapsedTimer.current) clearInterval(elapsedTimer.current)
@@ -456,9 +500,12 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     const displayMsg = orderIds
       ? `【已选合同：${orderIds.join('、')}】\n${fullMessage}`
       : fullMessage
+    const images = attachedImages.length > 0 ? attachedImages.map(({ dataUrl, name }) => ({ dataUrl, name })) : undefined
     setMessages((prev) => [...prev, { role: 'user', content: displayMsg }])
     if (orderIds) onClearOrders?.()
     setQuotedMessage(null)
+    setAttachedImages([])
+    if (fileInputRef.current) fileInputRef.current.value = ''
     api.chat.save(sessionId, 'user', fullMessage).catch(() => {})
     wsSend({
       type: 'chat',
@@ -469,8 +516,9 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       message: fullMessage,
       taskId: opts?.taskId,
       orders: orderIds,
+      images,
     })
-  }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, sessionId, quotedMessage])
+  }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, sessionId, quotedMessage, attachedImages])
 
   // Register sendMessage in the store so pages can trigger sends programmatically
   useEffect(() => {
@@ -511,6 +559,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const formatTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
   const handleNewConversation = () => {
+    setSessionId(crypto.randomUUID())
     setMessages([])
     setTodos([])
     setTaskOutputs({})
@@ -523,7 +572,66 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     setExpandedThinking(new Set())
     setLocalTab('chat')
     setEditorLang('')
+    setAttachedImages([])
+    setIsDragOver(false)
+    setShowHistory(false)
+    setMessagesLoading(false)
+    needsNewMessageRef.current = false
+    setIncompleteTaskWarnings([])
   }
+
+  const [sessionList, setSessionList] = useState<Array<{ id: string; title: string; updated_at: string }>>([])
+
+  const loadSessionList = useCallback(() => {
+    api.chat.sessions().then(res => {
+      setSessionList(res.data || [])
+    }).catch(() => {})
+  }, [])
+
+  const switchToSession = useCallback((sessId: string) => {
+    setSessionId(sessId)
+    setMessages([])
+    setTodos([])
+    setTaskOutputs({})
+    setStreamStatus('idle')
+    setStatusMessage('')
+    setTokenStats(null)
+    setErrorMessage(null)
+    currentResponseRef.current = ''
+    thinkingContentRef.current = ''
+    setExpandedThinking(new Set())
+    setLocalTab('chat')
+    setEditorLang('')
+    setAttachedImages([])
+    setIsDragOver(false)
+    setShowHistory(false)
+    setMessagesLoading(true)
+    api.chat.list(sessId).then(res => {
+      const loaded = (res.data || []).map((m: any) => {
+        const msg: any = { role: m.role, content: m.content }
+        if (m.tool_call_id) msg.toolCallId = m.tool_call_id
+        if (m.tool_calls_json) {
+          try { msg.toolCalls = JSON.parse(m.tool_calls_json) } catch {}
+        }
+        return msg
+      })
+      setMessages(loaded)
+      setMessagesLoading(false)
+    }).catch(() => setMessagesLoading(false))
+    // Restore tasks from agent-service
+    api.agent.tasks(sessId).then(res => {
+      if (res.data?.length > 0) setTodos(res.data as TodoItem[])
+    }).catch(() => {})
+  }, [])
+
+  // Load session from URL param (set by LeftSidebar history items)
+  useEffect(() => {
+    const sid = searchParams.get('session')
+    if (sid) {
+      switchToSession(sid)
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, switchToSession])
 
   const panelContent = (
     <>
@@ -568,11 +676,32 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
             <rect x="2" y="2" width="10" height="10" rx="2"/><path d="M7 5v4M5 7h4"/>
           </svg>
         </button>
-        <button className="panel-history-btn" title="历史对话" onClick={() => setShowHistory(!showHistory)}>
+        <button className="panel-history-btn" title="历史对话" onClick={() => { setShowHistory(!showHistory); if (!showHistory) loadSessionList() }}>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
             <circle cx="7" cy="7" r="5.5"/><path d="M7 4v3.5L9 9"/>
           </svg>
         </button>
+        {showHistory && (
+          <div className="history-dropdown">
+            <div className="history-dropdown-header">历史对话</div>
+            <div className="history-dropdown-list">
+              {sessionList.length === 0 ? (
+                <div className="history-dropdown-empty">暂无历史对话</div>
+              ) : (
+                sessionList.map(s => (
+                  <button
+                    key={s.id}
+                    className={cn('history-dropdown-item', s.id === sessionId && 'active')}
+                    onClick={() => switchToSession(s.id)}
+                  >
+                    <span className="history-dropdown-item-title">{s.title || '新对话'}</span>
+                    <span className="history-dropdown-item-time">{s.updated_at ? new Date(s.updated_at).toLocaleDateString('zh-CN') : ''}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
         <button className="panel-collapse-btn" title="收起" onClick={() => setCollapsed(!collapsed)}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
             <path d="M7 2l4 4-4 4-1-1 3-3-3-3z" />
@@ -659,7 +788,32 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
           </div>
         ) : (
           <div className="chat-messages" ref={chatMessagesRef} onScroll={handleChatScroll}>
-            {messages.map((msg, i) => (
+            {messages.map((msg, i) => {
+              // Render task_boundary as a visual separator between task bubbles
+              if (msg.role === 'task_boundary') {
+                return (
+                  <div key={i} className="chat-task-separator">
+                    <div className="chat-task-separator-line" />
+                    {msg.taskContent && (
+                      <div className="chat-task-separator-label">
+                        <svg width="10" height="10" viewBox="0 0 14 14" fill="none">
+                          <rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.2" />
+                          <path d="M4 7l2 2 4-4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span>{msg.taskContent}</span>
+                        {msg.verified && (
+                          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                            <circle cx="5" cy="5" r="4.5" fill="#22c55e20" stroke="#22c55e" strokeWidth="1" />
+                            <path d="M2.5 5l2 1.5 3-3" stroke="#22c55e" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </div>
+                    )}
+                    <div className="chat-task-separator-line" />
+                  </div>
+                )
+              }
+              return (
               <div key={i} className={cn('chat-msg-row', msg.role)}>
                 <div className={cn('chat-msg-avatar', msg.role)}>
                   {msg.role === 'user' ? '我' : (() => { const Icon = getSkillIcon(activeAgent?.icon || 'bot'); return <Icon size={13} strokeWidth={2.5} />; })()}
@@ -669,6 +823,35 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                     {msg.role === 'user' ? '用户' : (activeAgent?.name || 'AI 助手')}
                   </div>
                   <div className={cn('chat-msg-bubble', msg.role)}>
+                    {/* Task header */}
+                    {msg.role === 'assistant' && msg.taskContent && (
+                      <div className="chat-task-header">
+                        <svg width="11" height="11" viewBox="0 0 14 14" fill="none">
+                          <rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.2" />
+                          <path d="M4 7l2 2 4-4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span>{msg.taskContent}</span>
+                        {msg.verified !== undefined && (
+                          msg.verified ? (
+                            <span className="chat-task-verified ok">
+                              <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                                <circle cx="5" cy="5" r="4.5" fill="#22c55e20" stroke="#22c55e" strokeWidth="1" />
+                                <path d="M2.5 5l2 1.5 3-3" stroke="#22c55e" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                              已验证
+                            </span>
+                          ) : (
+                            <span className="chat-task-verified warn">
+                              <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                                <circle cx="5" cy="5" r="4.5" fill="#f59e0b20" stroke="#f59e0b" strokeWidth="1" />
+                                <path d="M5 2.5v3M5 7v.5" stroke="#f59e0b" strokeWidth="1.2" strokeLinecap="round" />
+                              </svg>
+                              验证未通过
+                            </span>
+                          )
+                        )}
+                      </div>
+                    )}
                     {/* Thinking block */}
                     {msg.role === 'assistant' && msg.thinking && (
                       <div className="chat-thinking-block">
@@ -720,7 +903,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                   </div>
                 </div>
               </div>
-            ))}
+            )})}
             {streamStatus !== 'idle' && streamStatus !== 'responding' && (
               <div className="chat-msg-row assistant" style={{ opacity: 0.7 }}>
                 <div className={cn('chat-msg-avatar', 'assistant')}>
@@ -769,8 +952,21 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       {/* Task panel — fixed at bottom of dialog, above status bar */}
       {showChat && todos.length > 0 && (
         <div className="chat-task-panel">
+          {incompleteTaskWarnings.length > 0 && (
+            <div className="incomplete-task-warnings">
+              {incompleteTaskWarnings.map((w, i) => (
+                <div key={i} className="incomplete-task-warning-item">
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                    <path d="M6 1l5.5 10H.5L6 1z" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1" strokeLinejoin="round"/>
+                    <path d="M6 4v2.5M6 8.5v.5" stroke="#fff" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  <span>{w}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="chat-task-panel-inner" ref={todoPanelRef} onScroll={handleTodoScroll}>
-            <TodoWidget todos={todos} taskOutputs={taskOutputs} />
+            <TodoWidget todos={todos} />
           </div>
         </div>
       )}
@@ -830,7 +1026,28 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       {/* Footer */}
       {showChat && (
         <div className="panel-footer">
-          <div className="chat-input-box">
+          <div
+            className={cn('chat-input-box', isDragOver && 'drag-over')}
+            onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true) }}
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
+            onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(false) }}
+            onDrop={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setIsDragOver(false)
+              if (e.dataTransfer.files) readFilesAsImages(e.dataTransfer.files)
+            }}
+          >
+            {isDragOver && (
+              <div className="chat-drop-overlay">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg>
+                <span>松开发送图片</span>
+              </div>
+            )}
             {/* Skill selector bar — click to switch */}
             {!lockAgent && (
               <button className="input-skill-bar" onClick={() => setShowAgentPopup(!showAgentPopup)}>
@@ -873,6 +1090,24 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
               </div>
             )}
             {footerSlot}
+            {attachedImages.length > 0 && (
+              <div className="chat-image-preview">
+                {attachedImages.map((img) => (
+                  <div key={img.id} className="chat-image-thumb">
+                    <img src={img.dataUrl} alt={img.name} />
+                    <button
+                      className="chat-image-thumb-remove"
+                      onClick={() => removeImage(img.id)}
+                      title="移除图片"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                        <path d="M1.5 1.5l7 7m-7 0l7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               className="chat-textarea"
               placeholder="输入消息..."
@@ -881,6 +1116,20 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
               onChange={(e) => setChatInput(e.target.value)}
               onCompositionStart={() => { isComposingRef.current = true }}
               onCompositionEnd={() => { isComposingRef.current = false }}
+              onPaste={(e) => {
+                const items = e.clipboardData?.items
+                if (items) {
+                  const files: File[] = []
+                  for (let i = 0; i < items.length; i++) {
+                    const file = items[i].getAsFile()
+                    if (file) files.push(file)
+                  }
+                  if (files.some((f) => f.type.startsWith('image/'))) {
+                    e.preventDefault()
+                    readFilesAsImages(files)
+                  }
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   if (isComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
@@ -900,6 +1149,27 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                   onClick={() => setShowQuotePopup(!showQuotePopup)}
                 >
                   #
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    if (e.target.files) readFilesAsImages(e.target.files)
+                  }}
+                />
+                <button
+                  className={cn('toolbar-action-btn', 'chat-image-btn', attachedImages.length > 0 && 'has-images')}
+                  title="上传图片"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
+                  </svg>
                 </button>
               </div>
               <div className="chat-toolbar-right">

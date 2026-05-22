@@ -10,6 +10,8 @@ import mcpRouter from './routes/mcp'
 import pluginsRouter from './routes/plugins'
 import modelsRouter from './routes/models'
 import { createCronTasksRouter, createApiRouter } from './routes/cronTasks'
+import { createToolsRouter } from './routes/tools'
+import { createTasksRouter } from './routes/tasks'
 import { CronScheduler } from './services/cronScheduler'
 import { McpPool } from './services/mcpPool'
 import { SessionStore } from './services/sessionStore'
@@ -47,6 +49,8 @@ app.use('/hooks', hooksRouter)
 app.use('/mcp', mcpRouter)
 app.use('/plugins', pluginsRouter)
 app.use('/models', modelsRouter)
+app.use('/tools', createToolsRouter(mcpPool))
+app.use('/tasks', createTasksRouter(sessionStore))
 app.use('/cron-tasks', createCronTasksRouter(scheduler))
 app.use('/api', createApiRouter())
 

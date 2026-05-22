@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { WsMessage } from './types'
 
 import ordersRouter from './routes/orders'
+import cabinetPackagesRouter from './routes/cabinet-packages'
 import tasksRouter from './routes/tasks'
 import analysisRouter from './routes/analysis'
 import rbacRouter from './routes/rbac'
@@ -29,15 +30,27 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
-import { getChatMessages, saveChatMessage, saveChatMessages } from './services/database'
+import { getChatMessages, saveChatMessage, saveChatMessages, getChatSessions, updateSessionTitle } from './services/database'
 
 // API routes
 app.use('/api/orders', ordersRouter)
+app.use('/api/cabinet-packages', cabinetPackagesRouter)
 app.use('/api/tasks', tasksRouter)
 app.use('/api/analysis', analysisRouter)
 app.use('/api', rbacRouter)
 app.use('/api/auth', authRouter)
 app.use('/api', notificationsRouter)
+
+// Chat session listing
+app.get('/api/chat/sessions', (_req, res) => {
+  try {
+    const sessions = getChatSessions()
+    res.json({ data: sessions })
+  } catch (err) {
+    console.error('[Chat] List sessions error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
 
 // Chat message persistence
 app.get('/api/chat/:sessionId', (req, res) => {
@@ -52,12 +65,12 @@ app.get('/api/chat/:sessionId', (req, res) => {
 
 app.post('/api/chat/:sessionId', (req, res) => {
   try {
-    const { role, content } = req.body
+    const { role, content, toolCallId, toolCalls } = req.body
     if (!role || !content) {
       res.status(400).json({ error: 'role and content are required' })
       return
     }
-    saveChatMessage(req.params.sessionId, role, content)
+    saveChatMessage(req.params.sessionId, role, content, toolCallId, toolCalls)
     res.json({ success: true })
   } catch (err) {
     console.error('[Chat] Save message error:', err)
@@ -76,6 +89,22 @@ app.post('/api/chat/:sessionId/batch', (req, res) => {
     res.json(result)
   } catch (err) {
     console.error('[Chat] Save batch error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+// Update session title (called by agent loop after generating LLM summary)
+app.put('/api/chat/:sessionId/title', (req, res) => {
+  try {
+    const { title } = req.body
+    if (!title || typeof title !== 'string') {
+      res.status(400).json({ error: 'title is required' })
+      return
+    }
+    updateSessionTitle(req.params.sessionId, title.trim().slice(0, 50))
+    res.json({ success: true })
+  } catch (err) {
+    console.error('[Chat] Update title error:', err)
     res.status(500).json({ error: 'Internal error' })
   }
 })

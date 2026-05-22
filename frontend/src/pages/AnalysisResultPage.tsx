@@ -680,7 +680,7 @@ function EmptyTodoState() {
         <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
       </svg>
       <p className="text-sm">暂无待办任务</p>
-      <p className="text-xs">AI 分析完成后将自动生成待办清单</p>
+      <p className="text-xs">点击「生成待办清单」按钮创建执行任务</p>
     </div>
   )
 }

@@ -34,6 +34,8 @@ export interface TodoItem {
   id: string
   content: string
   status: 'pending' | 'in_progress' | 'completed'
+  blockedBy?: string[]
+  verified?: boolean
 }
 
 export interface AgentMessage {
@@ -68,6 +70,7 @@ export interface AgentMessage {
   errorMessage?: string
   todos?: TodoItem[]
   action?: 'create' | 'update'
+  incompleteTasks?: string[]
 }
 
 export interface Session {

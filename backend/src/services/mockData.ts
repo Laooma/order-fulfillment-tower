@@ -1,4 +1,4 @@
-import type { SalesOrder, TodoTask, AnalysisTask } from '../types'
+import type { SalesOrder, TodoTask, AnalysisTask, CabinetPackage } from '../types'
 
 // ── Helper: generate random order data ──
 const customers = [
@@ -144,3 +144,84 @@ function generateAnalysisTasks(count: number): AnalysisTask[] {
 }
 
 export const mockAnalysisTasks: AnalysisTask[] = generateAnalysisTasks(30)
+
+// ── Cabinet Packages (机柜包) ──
+const cabinetFactoryNames = ['上海成套厂', '江苏成套厂', '浙江成套厂', '安徽成套厂', '广东成套厂', '湖北成套厂']
+const cabinetCustomers = [
+  '集团贸易有限公司', '工业自动化科技集团', '智慧制造科技集团', '东方钢铁股份有限公司',
+  '南方重工集团有限公司', '西部矿业股份有限公司', '华北电力设备有限公司', '华东精密机械制造厂',
+  '江苏精密科技有限公司', '浙江工贸实业有限公司', '上海国际贸易中心', '广东重工装备集团',
+  '山东钢铁物流有限公司', '福建智能制造股份', '湖北电力设备集团', '湖南新材料科技',
+  '安徽铜业集团', '精密仪器制造厂', '数字贸易发展有限公司', '新材料科技股份有限公司',
+]
+
+function generateCabinetPackages(count: number): CabinetPackage[] {
+  const packages: CabinetPackage[] = []
+  const baseDate = new Date('2025-03-01')
+  for (let i = 0; i < count; i++) {
+    const id = `GB2025-${String(i + 1).padStart(3, '0')}`
+    const factory = randItem(cabinetFactoryNames)
+    const customer = randItem(cabinetCustomers)
+
+    // Progress through nodes — earlier items are more complete
+    const progress = i / count // 0 = earliest, 1 = latest
+    const designOffset = randInt(5, 30)
+    const designDate = new Date(baseDate.getTime() + designOffset * 86400000)
+    const designCompletedAt = formatDate(designDate)
+
+    // Some items haven't finished design
+    const hasDesign = i > 2 || Math.random() > 0.1
+    const stockOffset = designOffset + randInt(10, 40)
+    const stockDate = new Date(baseDate.getTime() + stockOffset * 86400000)
+    const stockReadyAt = hasDesign ? formatDate(stockDate) : ''
+
+    // Some items haven't finished stock prep
+    const hasStockReady = hasDesign && (i > 5 || Math.random() > 0.15)
+    const estimatedAssemblyAt = hasStockReady ? formatDate(new Date(stockDate.getTime() + randInt(15, 45) * 86400000)) : ''
+
+    // Some items haven't started assembly
+    const hasAssemblyStarted = hasStockReady && (i > 10 || Math.random() > 0.2)
+    const actualAssemblyAt = hasAssemblyStarted ? formatDate(new Date(stockDate.getTime() + randInt(5, 20) * 86400000)) : ''
+
+    // Some items have completed assembly
+    const hasAssemblyCompleted = hasAssemblyStarted && (i > 18 || Math.random() > 0.3)
+    const assemblyCompletedAt = hasAssemblyCompleted ? formatDate(new Date(new Date(actualAssemblyAt).getTime() + randInt(10, 30) * 86400000)) : ''
+
+    // Shipping status
+    let shipStatus: '未发货' | '已发货' | '部分发货' = '未发货'
+    if (hasAssemblyCompleted && i > 25) {
+      shipStatus = Math.random() > 0.3 ? '已发货' : '部分发货'
+    } else if (hasAssemblyCompleted && i > 20) {
+      shipStatus = Math.random() > 0.6 ? '已发货' : Math.random() > 0.5 ? '部分发货' : '未发货'
+    }
+
+    // Determine status from progress (check stored values for consistency)
+    let status: CabinetPackage['status']
+    if (shipStatus === '已发货') {
+      status = 'shipped'
+    } else if (assemblyCompletedAt) {
+      status = 'completed'
+    } else if (actualAssemblyAt) {
+      status = 'assembling'
+    } else if (stockReadyAt) {
+      status = 'pending_assembly'
+    } else if (hasDesign) {
+      status = 'stock_preparing'
+    } else {
+      status = 'designing'
+    }
+
+    packages.push({
+      id, customer, status, factory,
+      designCompletedAt: hasDesign ? designCompletedAt : '',
+      stockReadyAt,
+      estimatedAssemblyAt,
+      actualAssemblyAt,
+      assemblyCompletedAt,
+      shipStatus,
+    })
+  }
+  return packages
+}
+
+export const mockCabinetPackages: CabinetPackage[] = generateCabinetPackages(40)

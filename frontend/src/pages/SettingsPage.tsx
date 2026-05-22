@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Cpu, FileText, Building2, Users, Shield, Code2, Server, Puzzle, Clock, Bell, Plus, Trash2, Edit3, Save, X, ChevronRight, ChevronDown, Play, ToggleLeft, ToggleRight, Mail, Send, MessageSquare, Pencil } from 'lucide-react'
-import { api, type Skill, type Hook, type McpServer, type Plugin, type CronTask } from '../lib/api'
+import { Cpu, FileText, Building2, Users, Shield, Code2, Server, Puzzle, Clock, Bell, Wrench, Plus, Trash2, Edit3, Save, X, ChevronRight, ChevronDown, Play, ToggleLeft, ToggleRight, Mail, Send, MessageSquare, Pencil } from 'lucide-react'
+import { api, type Skill, type Hook, type McpServer, type Plugin, type CronTask, type ToolConfig } from '../lib/api'
 import MarkdownEditor from '../components/MarkdownEditor'
 import { getSkillIcon, skillIconNames } from '../lib/skillIcons'
 import { useAuthStore } from '../stores/authStore'
@@ -37,6 +37,7 @@ const allSettingsTabs = [
   { key: 'roles', label: '角色与权限', icon: Shield, menuId: 'menu_settings_roles' },
   { key: 'cron-tasks', label: '定时任务', icon: Clock, menuId: 'menu_settings_cron' },
   { key: 'notifications', label: '通知管理', icon: Bell, menuId: 'menu_settings_notifications' },
+  { key: 'tools', label: 'Tool 管理', icon: Wrench, menuId: 'menu_settings_tools' },
 ]
 
 // Global refresh — callable from browser console or via chrome-devtools evaluate_script
@@ -94,6 +95,7 @@ export default function SettingsPage() {
             {activeKey === 'roles' && <RolePanel />}
             {activeKey === 'cron-tasks' && <CronTaskPanel />}
             {activeKey === 'notifications' && <NotificationPanel />}
+            {activeKey === 'tools' && <ToolConfigPanel />}
           </div>
         </div>
       </div>
@@ -3616,6 +3618,194 @@ function NotificationPanel() {
       {/* Modals */}
       {showWizard && renderWizard()}
       {showTplCreate && renderTplModal()}
+    </div>
+  )
+}
+
+function ToolConfigPanel() {
+  const [tools, setTools] = useState<ToolConfig[]>([])
+  const [selectedTool, setSelectedTool] = useState<ToolConfig | null>(null)
+  const [enabled, setEnabled] = useState(true)
+  const [descOverride, setDescOverride] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [filterSource, setFilterSource] = useState<'all' | 'built-in' | 'mcp'>('all')
+
+  const loadTools = useCallback(() => {
+    api.agent.tools()
+      .then((res) => setTools(res.tools))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadTools()
+  }, [loadTools])
+
+  const selectTool = (tool: ToolConfig) => {
+    setSelectedTool(tool)
+    setEnabled(tool.enabled)
+    setDescOverride(tool.description)
+  }
+
+  const handleSave = async () => {
+    if (!selectedTool) return
+    setSaving(true)
+    setSaved(false)
+    try {
+      await api.agent.saveTool(selectedTool.name, {
+        enabled,
+        description: descOverride !== selectedTool.description ? descOverride : undefined,
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      loadTools()
+    } catch (err) {
+      alert('保存失败: ' + (err as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleEnabled = async (tool: ToolConfig) => {
+    try {
+      await api.agent.saveTool(tool.name, { enabled: !tool.enabled })
+      loadTools()
+      if (selectedTool?.name === tool.name) {
+        setEnabled(!tool.enabled)
+      }
+    } catch (err) {
+      alert('操作失败: ' + (err as Error).message)
+    }
+  }
+
+  const isModified = selectedTool && (enabled !== selectedTool.enabled || descOverride !== selectedTool.description)
+
+  const filteredTools = filterSource === 'all' ? tools : tools.filter((t) => t.source === filterSource)
+  const builtinCount = tools.filter((t) => t.source === 'built-in').length
+  const mcpCount = tools.filter((t) => t.source === 'mcp').length
+
+  if (loading) return <div className="settings-empty"><p>加载中...</p></div>
+
+  return (
+    <div className="skill-config">
+      <div className="skill-sidebar">
+        <div className="skill-sidebar-header">
+          <span className="skill-sidebar-title">工具</span>
+          <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>{tools.length} 个工具</span>
+        </div>
+        <div style={{ display: 'flex', gap: 4, padding: '0 10px 6px' }}>
+          {(['all', 'built-in', 'mcp'] as const).map((f) => (
+            <button
+              key={f}
+              className={`btn btn-ghost`}
+              style={{ height: 22, fontSize: 10, fontWeight: filterSource === f ? 600 : 400, background: filterSource === f ? 'var(--color-surface-hover)' : undefined }}
+              onClick={() => setFilterSource(f)}
+            >
+              {f === 'all' ? '全部' : f === 'built-in' ? `内置 (${builtinCount})` : `MCP (${mcpCount})`}
+            </button>
+          ))}
+        </div>
+        <div className="skill-list">
+          {filteredTools.map((t) => (
+            <div
+              key={t.name}
+              className={`skill-list-item ${selectedTool?.name === t.name ? 'active' : ''}`}
+              onClick={() => selectTool(t)}
+            >
+              <span className={`skill-list-icon ${t.enabled ? 'ai-purple' : 'ai-orange'}`}>
+                <Wrench size={11} strokeWidth={2.5} />
+              </span>
+              <div className="skill-list-body">
+                <div className="skill-list-name">{t.name}</div>
+                <div className="skill-list-id">
+                  <span className={`hook-event-badge ${t.source === 'mcp' ? 'green' : ''}`}>{t.source === 'built-in' ? '内置' : 'MCP'}</span>
+                  {!t.enabled && <span className="hook-disabled-badge">已禁用</span>}
+                </div>
+              </div>
+              <button
+                className={`icon-btn-sm ${t.enabled ? '' : 'primary'}`}
+                title={t.enabled ? '禁用' : '启用'}
+                onClick={(e) => { e.stopPropagation(); toggleEnabled(t) }}
+              >
+                {t.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+              </button>
+            </div>
+          ))}
+          {filteredTools.length === 0 && <div className="skill-list-empty">暂无工具</div>}
+        </div>
+      </div>
+
+      <div className="skill-editor">
+        {selectedTool ? (
+          <>
+            <div className="skill-editor-header">
+              <span className="skill-editor-title">
+                <span className={`skill-list-icon ${enabled ? 'ai-purple' : 'ai-orange'}`}>
+                  <Wrench size={12} strokeWidth={2.5} />
+                </span>
+                {selectedTool.name}
+                <span className={`hook-event-badge ${selectedTool.source === 'mcp' ? 'green' : ''}`} style={{ marginLeft: 8 }}>
+                  {selectedTool.source === 'built-in' ? '内置' : 'MCP'}
+                </span>
+              </span>
+              <div className="skill-editor-actions">
+                {isModified && <span style={{ color: 'var(--color-warning)', fontSize: 11 }}>已修改</span>}
+                {saved && <span style={{ color: 'var(--color-success)', fontSize: 11, fontWeight: 500 }}>已保存</span>}
+                <button className="btn btn-primary" style={{ height: 28, fontSize: 11 }} onClick={handleSave} disabled={saving || !isModified}>
+                  <Save size={12} /> {saving ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-form" style={{ padding: 16 }}>
+              <FormGroup label="启用状态">
+                <label className="toggle-row">
+                  <span>{enabled ? '已启用 — Agent 可以使用此工具' : '已禁用 — Agent 不可使用此工具'}</span>
+                  <button
+                    className={`toggle-btn ${enabled ? 'on' : 'off'}`}
+                    onClick={() => setEnabled(!enabled)}
+                  >
+                    {enabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                  </button>
+                </label>
+              </FormGroup>
+
+              <FormGroup label="工具名称">
+                <code style={{ padding: '4px 8px', background: 'var(--color-surface-hover)', borderRadius: 4, fontSize: 13 }}>
+                  {selectedTool.name}
+                </code>
+              </FormGroup>
+
+              <FormGroup label="来源">
+                <span>
+                  {selectedTool.source === 'built-in' ? '内置工具（系统预置）' : `MCP 工具${selectedTool.mcpServer ? ` (${selectedTool.mcpServer})` : ''}`}
+                </span>
+              </FormGroup>
+
+              <FormGroup label="描述">
+                <textarea
+                  className="settings-textarea code-font"
+                  style={{ minHeight: 60 }}
+                  value={descOverride}
+                  onChange={(e) => setDescOverride(e.target.value)}
+                />
+              </FormGroup>
+
+              {selectedTool.parameters && (
+                <FormGroup label="参数 Schema">
+                  <pre className="settings-code-block" style={{ maxHeight: 300, overflow: 'auto', fontSize: 11 }}>
+                    {JSON.stringify(selectedTool.parameters, null, 2)}
+                  </pre>
+                </FormGroup>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="skill-editor-empty">选择一个工具查看详情</div>
+        )}
+      </div>
     </div>
   )
 }

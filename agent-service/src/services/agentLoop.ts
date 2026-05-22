@@ -7,11 +7,13 @@ import { getProviderForModel, getDefaultModel, getAllModels } from './llmConfig'
 import { loadSkills, createSkill, saveSkill, saveSkillFile } from './skillLoader'
 import { loadHooks, createHook, saveHook } from './hookLoader'
 import { runHooks } from './hookRunner'
+import { getEnabledTools } from './toolManager'
 
 const sessions = new Map<string, Session>()
 const todoStores = new Map<string, TodoItem[]>()
 const sessionLocks = new Map<string, Promise<void>>()
 const sessionAborts = new Map<string, AbortController>()
+const pendingBoundaries = new Map<string, Array<{ taskId: string; taskContent: string; verified?: boolean }>>()
 
 // Pool and store references (set via initAgentLoop)
 let mcpPool: McpPool | null = null
@@ -232,6 +234,96 @@ function handleShowAnalysisResult(args: Record<string, unknown>, sessionId: stri
   return `分析结果页面"${title}"已生成并展示在"AI分析结果"标签页中。用户可在页面顶部切换到此标签页查看可视化分析内容。`
 }
 
+const CREATE_ANALYSIS_TASK_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'create_analysis_task',
+    description: '创建分析任务记录。在完成订单履约分析后调用此工具，将分析结果持久化保存。系统会自动生成任务ID并在历史分析页面展示。',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '分析任务标题，格式如"HT202598001等2个订单履约分析"' },
+        result: { type: 'object', description: '结构化分析结果，包含 orders 数组（每个订单的 problemCategories、deliveryTables 等），格式参考系统 prompt 中的 JSON schema' },
+      },
+      required: ['title'],
+    },
+  },
+}
+
+async function handleCreateAnalysisTask(
+  args: Record<string, unknown>,
+  ws: WebSocket,
+  sessionId: string,
+  skillName: string,
+  orders: string[],
+  sessionMessages?: Array<{ role: string; content: string }>,
+): Promise<string> {
+  const title = String(args.title || `${skillName} — 履约分析`)
+  const result = args.result as Record<string, unknown> | undefined
+
+  const task = await createAnalysisTask(title, skillName, orders)
+  if (!task) {
+    return 'Error: 创建分析任务失败，请稍后重试'
+  }
+
+  // Primary: extract structured JSON from all assistant messages (same as old flow quality)
+  let structuredJson: string | null = null
+  if (sessionMessages) {
+    const allAssistantContent = sessionMessages
+      .filter((m) => m.role === 'assistant')
+      .map((m) => m.content)
+      .join('\n')
+    structuredJson = extractStructuredJson(allAssistantContent)
+  }
+
+  // Use the extracted JSON from messages (primary), fall back to tool result parameter
+  const jsonToSave = structuredJson || (result ? JSON.stringify(result) : null)
+  if (jsonToSave) {
+    const saved = await saveStructuredResult(task.id, jsonToSave)
+    if (!saved && result) {
+      console.error('[AgentLoop] Failed to save structured result for', task.id)
+    }
+  } else {
+    console.warn('[AgentLoop] No structured JSON found for analysis task', task.id)
+  }
+
+  send(ws, {
+    type: 'analysis_created',
+    sessionId,
+    analysisId: task.id,
+    analysisTitle: title,
+    redirect: `/analysis/${task.id}`,
+  })
+
+  return `分析任务已创建（ID: ${task.id}），用户可在历史分析页面查看。待办清单需由用户在界面点击按钮触发，请勿自动调用 generate_todos。`
+}
+
+const GENERATE_TODOS_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'generate_todos',
+    description: '仅在用户明确要求时调用。为已有的分析任务生成待办执行清单。根据分析结果中的问题卡片，为每个问题生成具体的待办任务，包含任务描述、优先级、负责人、截止日期等。',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: '分析任务ID' },
+      },
+      required: ['taskId'],
+    },
+  },
+}
+
+function handleGenerateTodosTool(args: Record<string, unknown>, ws: WebSocket, sessionId: string, mcp: McpPool, signal?: AbortSignal): Promise<string> {
+  const taskId = String(args.taskId || '')
+  if (!taskId) {
+    return Promise.resolve('Error: taskId 参数为必填项')
+  }
+  // Run todo generation inline — the function sends its own WS messages and saves results
+  return generateTodosForTask(ws, `${sessionId}:todos`, taskId, '请为此分析任务生成待办清单', [], mcp, signal)
+    .then(() => `待办清单已生成并保存到分析任务 ${taskId}`)
+    .catch((err) => `生成待办清单失败: ${err.message}`)
+}
+
 function handleSaveHook(args: Record<string, unknown>): string {
   try {
     const hookId = String(args.hookId || '')
@@ -370,6 +462,12 @@ function handleTodoWrite(args: Record<string, unknown>, sessionId: string, ws: W
     const existing = todoStores.get(sessionId) || []
     const merged = [...existing]
 
+    // Record old statuses to detect newly completed tasks
+    const oldStatuses = new Map<string, string>()
+    for (const t of existing) {
+      oldStatuses.set(t.id, t.status)
+    }
+
     for (const item of todos) {
       const idx = merged.findIndex((t) => t.id === item.id)
       if (idx >= 0) {
@@ -382,6 +480,26 @@ function handleTodoWrite(args: Record<string, unknown>, sessionId: string, ws: W
     todoStores.set(sessionId, merged)
     send(ws, { type: 'todo_list', sessionId, todos: merged })
 
+    // Persist tasks to DB
+    if (sessionStore) {
+      sessionStore.saveTasks(sessionId, merged)
+    }
+
+    // Queue task_boundary for tasks newly marked as completed (flushed before next iteration's text)
+    for (const item of todos) {
+      const oldStatus = oldStatuses.get(item.id)
+      if (item.status === 'completed' && oldStatus && oldStatus !== 'completed') {
+        if (!pendingBoundaries.has(sessionId)) {
+          pendingBoundaries.set(sessionId, [])
+        }
+        pendingBoundaries.get(sessionId)!.push({
+          taskId: item.id,
+          taskContent: item.content || item.id,
+          verified: item.verified,
+        })
+      }
+    }
+
     const counts = { pending: 0, in_progress: 0, completed: 0 }
     for (const t of merged) {
       if (t.status === 'pending') counts.pending++
@@ -389,13 +507,23 @@ function handleTodoWrite(args: Record<string, unknown>, sessionId: string, ws: W
       if (t.status === 'completed') counts.completed++
     }
 
-    return `Todo list updated. ${counts.completed} completed, ${counts.in_progress} in progress, ${counts.pending} pending.`
+    return `Todo list updated. ${counts.completed} completed, ${counts.in_progress} in progress, ${counts.pending} pending. Use blockedBy field (array of task ids) to declare dependencies.`
   } catch (err: any) {
     return `Error: ${err.message}`
   }
 }
 
-async function saveChatHistory(sessionId: string, messages: Array<{ role: string; content: string }>) {
+function flushPendingBoundaries(ws: WebSocket, sessionId: string) {
+  const boundaries = pendingBoundaries.get(sessionId)
+  if (boundaries && boundaries.length > 0) {
+    for (const b of boundaries) {
+      send(ws, { type: 'task_boundary', sessionId, taskId: b.taskId, taskContent: b.taskContent, verified: b.verified })
+    }
+    pendingBoundaries.delete(sessionId)
+  }
+}
+
+async function saveChatHistory(sessionId: string, messages: Session['messages']) {
   try {
     await fetch(`${BACKEND_API}/chat/${sessionId}/batch`, {
       method: 'POST',
@@ -404,6 +532,60 @@ async function saveChatHistory(sessionId: string, messages: Array<{ role: string
     })
   } catch (err) {
     console.error('[AgentLoop] Failed to save chat history:', err)
+  }
+}
+
+async function generateSessionTitle(sessionId: string, messages: Session['messages']) {
+  try {
+    // Extract user + assistant messages for summarization
+    const convo = messages
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim())
+      .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content.trim().slice(0, 300)}`)
+
+    if (convo.length < 2) return
+
+    const convoText = convo.join('\n').slice(0, 3000)
+    const modelId = getDefaultModel()
+    const provider = getProviderForModel(modelId)
+    if (!provider) return
+
+    // Timeout after 15 seconds to avoid blocking the agent loop
+    const result = await Promise.race([
+      chatCompletion(
+        {
+          model: modelId,
+          messages: [
+            { role: 'system', content: '你是一个标题生成器。根据对话内容生成一个简短的会话标题（不超过15个字）。只输出标题文本，不要有任何额外说明、标点或引号。' },
+            { role: 'user', content: `为以下对话生成一个简短的会话标题：\n\n${convoText}` },
+          ],
+          temperature: 0.3,
+        },
+        {
+          apiKey: provider.apiKey,
+          apiUrl: provider.apiUrl,
+          model: modelId,
+        },
+      ),
+      new Promise<{ content: string }>((_, reject) =>
+        setTimeout(() => reject(new Error('Title generation timeout after 15s')), 15000)
+      ),
+    ])
+
+    const title = (result.content || '').trim().slice(0, 50)
+    if (!title) return
+
+    const putRes = await fetch(`${BACKEND_API}/chat/${sessionId}/title`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    })
+    if (!putRes.ok) {
+      console.error(`[AgentLoop] Failed to update title: ${putRes.status} ${putRes.statusText}`)
+      return
+    }
+    console.log(`[AgentLoop] Generated session title for ${sessionId}: "${title}"`)
+  } catch (err) {
+    console.error('[AgentLoop] Failed to generate session title:', err)
   }
 }
 
@@ -436,11 +618,21 @@ export function getOrCreateSession(sessionId: string, skillId: string, systemPro
     }
     sessions.set(key, session)
   }
+
+  // Restore persisted tasks if not already loaded
+  if (!todoStores.has(sessionId) && sessionStore) {
+    const savedTasks = sessionStore.loadTasks(sessionId)
+    if (savedTasks.length > 0) {
+      todoStores.set(sessionId, savedTasks)
+    }
+  }
+
   return sessions.get(key)!
 }
 
 export function clearSession(sessionId: string): void {
   sessions.delete(sessionId)
+  pendingBoundaries.delete(sessionId)
 }
 
 export function abortSession(sessionId: string): void {
@@ -455,11 +647,6 @@ const A2UI_VISUAL_KEYWORDS = [
 ]
 
 // Analysis task creation trigger keywords
-const ANALYSIS_TASK_KEYWORDS = [
-  '分析', '创建分析', '生成报告', '履约分析', '订单分析', '诊断', '风险评估',
-  '深度分析', '对比分析', '统计分析', '汇总',
-]
-
 function shouldEnableA2ui(userMessage: string, skill: Skill | null): boolean {
   // Skill explicitly declares A2UI requirement
   if (skill?.prompt) {
@@ -475,29 +662,6 @@ function shouldEnableA2ui(userMessage: string, skill: Skill | null): boolean {
   if (skill?.prompt) {
     const sp = skill.prompt.toLowerCase()
     if (sp.includes('a2ui') || sp.includes('可视化输出') || sp.includes('图表展示') || sp.includes('show_analysis')) {
-      return true
-    }
-  }
-  return false
-}
-
-function shouldCreateAnalysisTask(userMessage: string, skill: Skill | null, orders?: string[]): boolean {
-  // Skill explicitly declares analysis task requirement
-  if (skill?.prompt) {
-    const sp = skill.prompt.toLowerCase()
-    if (sp.includes('requires_analysis_task')) return true
-  }
-  // When orders are selected, analysis task creation is implicit
-  if (orders && orders.length > 0) return true
-  // Check user message for analysis keywords
-  const msg = userMessage.toLowerCase()
-  for (const kw of ANALYSIS_TASK_KEYWORDS) {
-    if (msg.includes(kw.toLowerCase())) return true
-  }
-  // Check if skill prompt mentions analysis output
-  if (skill?.prompt) {
-    const sp = skill.prompt.toLowerCase()
-    if (sp.includes('分析') || sp.includes('报告') || sp.includes('诊断')) {
       return true
     }
   }
@@ -603,6 +767,7 @@ export async function handleAgentMessage(
 
   try {
 
+  // Route: frontend button sends taskId to trigger todo generation
   if (taskId) {
     await generateTodosForTask(ws, sessionId, taskId, message, orders || [], mcp, abortController.signal)
     return
@@ -676,11 +841,13 @@ export async function handleAgentMessage(
   pushMessage(sessionKey, session, { role: 'user', content: userMessage })
   session.updatedAt = Date.now()
 
-  // Determine whether to enable A2UI visualization and analysis task creation
+  // Determine whether to enable A2UI visualization
   const enableA2ui = shouldEnableA2ui(message, skill)
-  const enableAnalysisTask = shouldCreateAnalysisTask(message, skill, orders)
 
-  const mcpTools = mcp.getTools().map((t) => ({
+  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'generate_todos', 'show_analysis_result', 'create_analysis_task'])
+    // Normalize function name for comparison (strip underscores, lowercase) to match built-in names
+    const BUILTIN_NORMALIZED = new Set(Array.from(BUILTIN_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
+    const MCP_TOOLS_RAW = mcp.getTools().map((t) => ({
       type: 'function' as const,
       function: {
         name: t.name,
@@ -688,27 +855,34 @@ export async function handleAgentMessage(
         parameters: t.inputSchema || { type: 'object', properties: {} },
       },
     }))
+    const mcpTools = MCP_TOOLS_RAW.filter((t) => !BUILTIN_NORMALIZED.has(t.function.name.toLowerCase().replace(/_/g, '')))
     // Always include built-in tools; show_analysis_result only when A2UI is enabled
+    const enabledNames = new Set(getEnabledTools(mcp).map((t) => t.name))
     const tools = [
       TODO_WRITE_TOOL,
       SAVE_SKILL_TOOL,
       SAVE_HOOK_TOOL,
       SEND_NOTIFICATION_TOOL,
       LIST_NOTIFICATION_CHANNELS_TOOL,
+      GENERATE_TODOS_TOOL,
       ...(enableA2ui ? [SHOW_ANALYSIS_RESULT_TOOL] : []),
       ...mcpTools,
-    ]
+    ].filter((t) => enabledNames.has(t.function.name) || BUILTIN_NAMES.has(t.function.name))
 
     console.log(`[AgentLoop] Starting streaming for ${skill.name} via ${modelId}`)
 
     let iteration = 0
     let finalContent = ''
+    let analysisId: string | undefined
+    const processedMarkers = new Set<string>()
 
     while (iteration < MAX_ITERATIONS) {
       iteration++
 
       if (iteration > 1) {
         send(ws, { type: 'status', sessionId, status: 'calling_tool', skillName: skill.name, skillIcon: skill.icon, skillColor: skill.color, modelId })
+        // Flush pending task_boundary events so next iteration's text goes into a new bubble
+        flushPendingBoundaries(ws, sessionId)
       }
 
       // Stream LLM response
@@ -731,10 +905,9 @@ export async function handleAgentMessage(
         tools: tools.length > 0 ? tools : undefined,
       }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl, signal: abortController.signal })) {
 
-        // Forward content chunks to frontend in real-time
+        // Accumulate text content; markers will be split and emitted after streaming
         if (chunk.content) {
           streamContent += chunk.content
-          send(ws, { type: 'chunk', content: chunk.content, sessionId, taskId: getActiveTaskId(sessionId) })
         }
 
         // Track usage
@@ -764,15 +937,54 @@ export async function handleAgentMessage(
         }
       }
 
+      // Emit text content, splitting at TASK_COMPLETE markers
+      const taskCompleteSplitRe = /[\[<]TASK_COMPLETE:([^\s\[\]<>]+)[\]>]?/g
+
+      // Find all marker positions in streamContent
+      const markerPositions: Array<{ index: number; endIndex: number; taskId: string }> = []
+      let mc
+      while ((mc = taskCompleteSplitRe.exec(streamContent)) !== null) {
+        markerPositions.push({ index: mc.index, endIndex: mc.index + mc[0].length, taskId: mc[1] })
+        if (!processedMarkers.has(mc[1])) {
+          processedMarkers.add(mc[1])
+        }
+      }
+
+      if (markerPositions.length > 0) {
+        const todos = todoStores.get(sessionId) || []
+        let lastEnd = 0
+        for (const mp of markerPositions) {
+          const segment = streamContent.slice(lastEnd, mp.index).trim()
+          if (segment) {
+            send(ws, { type: 'chunk', content: segment, sessionId, taskId: getActiveTaskId(sessionId) })
+          }
+          // Flush any pending boundaries from handleTodoWrite, then send a boundary for this marker
+          flushPendingBoundaries(ws, sessionId)
+          const task = todos.find(t => t.id === mp.taskId)
+          send(ws, { type: 'task_boundary', sessionId, taskId: mp.taskId, taskContent: task?.content || '', verified: true })
+          lastEnd = mp.endIndex
+        }
+        // Emit remaining text after the last marker
+        const remaining = streamContent.slice(lastEnd).trim()
+        if (remaining) {
+          send(ws, { type: 'chunk', content: remaining, sessionId, taskId: getActiveTaskId(sessionId) })
+        }
+      } else if (streamContent.trim()) {
+        // No markers — send as single chunk
+        send(ws, { type: 'chunk', content: streamContent.trim(), sessionId, taskId: getActiveTaskId(sessionId) })
+      }
+
       // Track tokens and check compaction after each LLM call
       await trackTokensAndCompact(sessionKey, session, totalTokens.prompt, modelId)
 
       // Process accumulated tool calls
       const toolCallsArr = Array.from(accumulatedToolCalls.values())
       if (toolCallsArr.length > 0) {
+        // Strip TASK_COMPLETE markers from saved content (both [TASK_COMPLETE:id] and <TASK_COMPLETE:id>)
+        const cleanContent = streamContent.replace(/[\[<]TASK_COMPLETE:[^\s\[\]<>]+[\]>]?/g, '')
         pushMessage(sessionKey, session, {
           role: 'assistant',
-          content: streamContent,
+          content: cleanContent,
           toolCalls: toolCallsArr,
         })
 
@@ -791,8 +1003,10 @@ export async function handleAgentMessage(
             toolLabel,
           })
 
-          // Handle built-in todo_write tool
-          if (toolName === 'todo_write') {
+        // Normalize tool name for comparison (handle PascalCase + underscores from MCP)
+        const normalizedName = toolName.toLowerCase().replace(/_/g, '')
+        // Handle built-in todo_write tool
+        if (normalizedName === 'todowrite') {
             const resultText = handleTodoWrite(toolArgs, sessionId, ws)
             pushMessage(sessionKey, session, {
               role: 'tool',
@@ -809,7 +1023,7 @@ export async function handleAgentMessage(
           }
 
           // Handle built-in save_skill tool
-          if (toolName === 'save_skill') {
+          if (normalizedName === 'saveskill') {
             const resultText = handleSaveSkill(toolArgs)
             pushMessage(sessionKey, session, {
               role: 'tool',
@@ -826,7 +1040,7 @@ export async function handleAgentMessage(
           }
 
           // Handle built-in save_hook tool
-          if (toolName === 'save_hook') {
+          if (normalizedName === 'savehook') {
             const resultText = handleSaveHook(toolArgs)
             pushMessage(sessionKey, session, {
               role: 'tool',
@@ -843,7 +1057,7 @@ export async function handleAgentMessage(
           }
 
           // Handle built-in show_analysis_result tool
-          if (toolName === 'show_analysis_result') {
+          if (normalizedName === 'showanalysisresult') {
             const resultText = handleShowAnalysisResult(toolArgs, sessionId, ws)
             pushMessage(sessionKey, session, {
               role: 'tool',
@@ -860,7 +1074,7 @@ export async function handleAgentMessage(
           }
 
           // Handle built-in send_notification tool
-          if (toolName === 'send_notification') {
+          if (normalizedName === 'sendnotification') {
             const resultText = await handleSendNotification(toolArgs)
             pushMessage(sessionKey, session, {
               role: 'tool',
@@ -877,8 +1091,26 @@ export async function handleAgentMessage(
           }
 
           // Handle built-in list_notification_channels tool
-          if (toolName === 'list_notification_channels') {
+          if (normalizedName === 'listnotificationchannels') {
             const resultText = await handleListNotificationChannels()
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: resultText.slice(0, 200),
+            })
+            continue
+          }
+
+
+          // Handle built-in generate_todos tool
+          if (normalizedName === 'generatetodos') {
+            const resultText = await handleGenerateTodosTool(toolArgs, ws, sessionId, mcp, abortController.signal)
             pushMessage(sessionKey, session, {
               role: 'tool',
               content: resultText,
@@ -949,75 +1181,66 @@ export async function handleAgentMessage(
         continue
       }
 
-      // No tool calls — final response
-      finalContent = streamContent || '抱歉，我未能生成有效的分析结果。'
+      // No tool calls — final response. Flush any pending boundaries.
+      flushPendingBoundaries(ws, sessionId)
+      // Text already emitted above; save clean content for session
+      const cleanFinal = streamContent.replace(/[\[<]TASK_COMPLETE:[^\s\[\]<>]+[\]>]?/g, '').trim()
+      finalContent = cleanFinal || '抱歉，我未能生成有效的分析结果。'
       pushMessage(sessionKey, session, { role: 'assistant', content: finalContent })
       break
     }
 
-    const elapsed = Date.now() - startTime
-
-    // Extract structured JSON and create analysis task — only when enabled
-    let analysisId: string | undefined
-    let analysisTitle: string | undefined
-    let redirect: string | undefined
-    let hasStructuredResult = false
-
-    if (enableAnalysisTask) {
-      const structuredJson = extractStructuredJson(finalContent)
+    // Post-loop: extract structured JSON from all assistant messages and auto-create analysis task
+    if (!analysisId) {
+      const allAssistantContent = session.messages
+        .filter((m) => m.role === 'assistant')
+        .map((m) => m.content)
+        .join('\n')
+      const structuredJson = extractStructuredJson(allAssistantContent)
       if (structuredJson) {
-        try {
-          const parsed = JSON.parse(structuredJson)
-          if (parsed.analysisTitle) {
-            analysisTitle = parsed.analysisTitle
-          }
-        } catch { /* use fallback title logic */ }
-      }
-
-      // Fallback: detect title from old format marker
-      if (!analysisTitle) {
-        const analysisTitleMatch = finalContent.match(/\[创建分析任务[：:]\s*(.+?)\]/)
-        if (analysisTitleMatch) {
-          analysisTitle = analysisTitleMatch[1].trim()
-        } else if (orders && orders.length > 0) {
-          const hasAnalysisSections = /##\s*(分析|履约|风险|建议|结论|卡点|诊断|报告)/.test(finalContent)
-          if (hasAnalysisSections) {
-            analysisTitle = `${skill.name} — ${orders[0]}等${orders.length}个订单履约分析`
-          }
-        }
-      }
-
-      if (analysisTitle) {
-        const task = await createAnalysisTask(analysisTitle, skill.name, orders || [])
+        const task = await createAnalysisTask(
+          `${skill.name} — 履约分析`,
+          skill.name,
+          orders || [],
+        )
         if (task) {
           analysisId = task.id
-          redirect = `/analysis/${task.id}`
-
-          // Save structured result to database
-          if (structuredJson) {
-            const saved = await saveStructuredResult(task.id, structuredJson)
-            hasStructuredResult = saved
-            if (saved) {
-              console.log(`[AgentLoop] Structured result saved for task ${task.id}`)
-            }
-          }
+          await saveStructuredResult(task.id, structuredJson)
+          send(ws, {
+            type: 'analysis_created',
+            sessionId,
+            analysisId: task.id,
+            analysisTitle: `${skill.name} — 履约分析`,
+            redirect: `/analysis/${task.id}`,
+          })
         }
+      } else {
+        console.warn('[AgentLoop] No structured JSON found in assistant messages for session', sessionId)
       }
     }
+
+    const elapsed = Date.now() - startTime
 
     // Look up context window for the used model
     const modelInfo = getAllModels().find((m) => m.id === modelId)
     const contextWindow = modelInfo?.contextWindow
 
-    // Persist chat history (user + assistant messages only)
+    // Persist full chat history (all roles: user, assistant, tool; plus tool metadata)
     const chatMsgs = session.messages
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => ({ role: m.role, content: m.content }))
-    saveChatHistory(sessionId, chatMsgs)
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        toolCallId: m.toolCallId,
+        toolCalls: m.toolCalls,
+      }))
+    await saveChatHistory(sessionId, chatMsgs)
     // Also save under the analysis task ID so the analysis page can load it
     if (analysisId && analysisId !== sessionId) {
       saveChatHistory(analysisId, chatMsgs)
     }
+    // Generate an LLM-based summary title for the conversation (must be after saveChatHistory completes)
+    await generateSessionTitle(sessionId, chatMsgs)
 
     // Run after_chat hooks
     const afterChatCtx = { sessionId, skillId: skill.id, skillName: skill.name, message: finalContent }
@@ -1028,14 +1251,61 @@ export async function handleAgentMessage(
       }
     }
 
+    // ── Task verification ──
+    const tasks = todoStores.get(sessionId) || []
+    const incompleteTasks: string[] = []
+    if (tasks.length > 0) {
+      // Verify completed tasks
+      const allAssistantContent = session.messages
+        .filter(m => m.role === 'assistant')
+        .map(m => m.content)
+        .join('\n')
+      const hasAnalysisJson = !!extractStructuredJson(allAssistantContent)
+
+      let tasksUpdated = false
+      for (const t of tasks) {
+        if (t.status === 'completed' && t.verified === undefined) {
+          // Only verify if we have data to check against; otherwise leave as unchecked
+          if (hasAnalysisJson || analysisId) {
+            t.verified = true
+            tasksUpdated = true
+          }
+        }
+        if (t.status === 'in_progress') {
+          // Reset in_progress to pending since this agent turn ended
+          t.status = 'pending'
+          tasksUpdated = true
+        }
+        if (t.status !== 'completed') {
+          // Check if blockedBy dependencies are all completed
+          if (t.blockedBy && t.blockedBy.length > 0) {
+            const depsMet = t.blockedBy.every(did => {
+              const dep = tasks.find(dt => dt.id === did)
+              return dep && dep.status === 'completed'
+            })
+            if (!depsMet) {
+              incompleteTasks.push(`${t.id}: ${t.content} (依赖未满足)`)
+            }
+          } else {
+            incompleteTasks.push(`${t.id}: ${t.content}`)
+          }
+        }
+      }
+      if (tasksUpdated) {
+        send(ws, { type: 'todo_list', sessionId, todos: tasks })
+        if (sessionStore) {
+          sessionStore.saveTasks(sessionId, tasks)
+        }
+      }
+    }
+
     // Send complete with full stats
     send(ws, {
       type: 'complete',
       sessionId,
       analysisId,
-      analysisTitle,
-      redirect,
-      hasStructuredResult,
+      redirect: analysisId ? `/analysis/${analysisId}` : undefined,
+      hasStructuredResult: !!analysisId,
       elapsed,
       totalTokens: totalTokens.prompt + totalTokens.completion,
       promptTokens: totalTokens.prompt,
@@ -1046,6 +1316,7 @@ export async function handleAgentMessage(
       skillColor: skill.color,
       modelId,
       taskId: getActiveTaskId(sessionId),
+      incompleteTasks: incompleteTasks.length > 0 ? incompleteTasks : undefined,
     })
 
   } catch (err: any) {
@@ -1070,6 +1341,7 @@ export async function handleAgentMessage(
     if (sessionAborts.get(sessionId) === abortController) {
       sessionAborts.delete(sessionId)
     }
+    pendingBoundaries.delete(sessionId)
     releaseLock()
   }
 }
@@ -1148,7 +1420,9 @@ async function generateTodosForTask(
   }
 
   try {
-    const mcpTools = mcp.getTools().map((t) => ({
+    const BUILTIN_TODO_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'generate_todos'])
+    const BUILTIN_TODO_NORMALIZED = new Set(Array.from(BUILTIN_TODO_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
+    const TODO_MCP_TOOLS = mcp.getTools().map((t) => ({
       type: 'function' as const,
       function: {
         name: t.name,
@@ -1156,7 +1430,8 @@ async function generateTodosForTask(
         parameters: t.inputSchema || { type: 'object', properties: {} },
       },
     }))
-    const tools = [TODO_WRITE_TOOL, SAVE_SKILL_TOOL, SAVE_HOOK_TOOL, SEND_NOTIFICATION_TOOL, LIST_NOTIFICATION_CHANNELS_TOOL, ...mcpTools]
+    const mcpTools = TODO_MCP_TOOLS.filter((t) => !BUILTIN_TODO_NORMALIZED.has(t.function.name.toLowerCase().replace(/_/g, '')))
+    const tools = [TODO_WRITE_TOOL, SAVE_SKILL_TOOL, SAVE_HOOK_TOOL, SEND_NOTIFICATION_TOOL, LIST_NOTIFICATION_CHANNELS_TOOL, ...mcpTools].filter((t) => getEnabledTools(mcp).some((et) => et.name === t.function.name) || BUILTIN_TODO_NORMALIZED.has(t.function.name.toLowerCase().replace(/_/g, '')))
 
     let iteration = 0
     let finalContent = ''
@@ -1213,32 +1488,33 @@ async function generateTodosForTask(
           let toolArgs: Record<string, unknown> = {}
           try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch { /* keep empty */ }
           const toolName = toolCall.function.name
+          const normalizedName = toolName.toLowerCase().replace(/_/g, '')
 
-          if (toolName === 'todo_write') {
+          if (normalizedName === 'todowrite') {
             const resultText = handleTodoWrite(toolArgs, sessionId, ws)
             pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
             continue
           }
 
-          if (toolName === 'save_skill') {
+          if (normalizedName === 'saveskill') {
             const resultText = handleSaveSkill(toolArgs)
             pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
             continue
           }
 
-          if (toolName === 'save_hook') {
+          if (normalizedName === 'savehook') {
             const resultText = handleSaveHook(toolArgs)
             pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
             continue
           }
 
-          if (toolName === 'send_notification') {
+          if (normalizedName === 'sendnotification') {
             const resultText = await handleSendNotification(toolArgs)
             pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
             continue
           }
 
-          if (toolName === 'list_notification_channels') {
+          if (normalizedName === 'listnotificationchannels') {
             const resultText = await handleListNotificationChannels()
             pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
             continue
@@ -1265,8 +1541,12 @@ async function generateTodosForTask(
       break
     }
 
-    // Extract todos JSON and save
-    const todosJson = extractStructuredJson(finalContent)
+    // Extract todos JSON and save — search all assistant messages, not just finalContent
+    const allAssistantContent = session.messages
+      .filter((m) => m.role === 'assistant' && m.content)
+      .map((m) => m.content)
+      .join('\n')
+    const todosJson = extractStructuredJson(allAssistantContent || finalContent)
     if (todosJson) {
       try {
         const parsed = JSON.parse(todosJson)
@@ -1327,6 +1607,8 @@ function getToolLabel(name: string, args: Record<string, unknown>): string {
     case 'save_skill': return `保存 Skill: ${String(args.name || args.skillId || '')}`
     case 'save_hook': return `保存 Hook: ${String(args.name || args.hookId || '')}`
     case 'show_analysis_result': return `生成分析页面: ${String(args.title || '')}`
+    case 'create_analysis_task': return `创建分析任务: ${String(args.title || '')}`
+    case 'generate_todos': return `生成待办清单: ${String(args.taskId || '')}`
     case 'send_notification': return `发送通知: ${String(args.channelId || '')}`
     case 'list_notification_channels': return `获取通知渠道列表`
     default: return `调用 ${name}`
@@ -1373,7 +1655,8 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `- todo_write: 创建和管理任务列表\n`
   prompt += `- save_skill: 将新创建的 Skill 保存到文件系统（skillId、name、description、icon、color、prompt 六个必填参数，可选的 references 数组和 scripts 数组用于创建参考文档和脚本文件）\n`
   prompt += `- save_hook: 将新创建的 Hook 保存到文件系统（hookId、name、description、event、script 五个必填参数，enabled 和 matcher 可选）\n`
-  prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）\n\n`
+  prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）\n`
+  prompt += `- generate_todos: 【严格限制】仅在用户明确要求"生成待办清单"、"生成待办"、"创建执行任务"时调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办，非用户明确要求不得触发\n\n`
 
   // Add references and scripts info
   if (skill.references.length > 0 || skill.scripts.length > 0) {
@@ -1413,19 +1696,41 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `- Table: { component: "Table", columns: [{key:"k","label":"列名"}], rows: [{"k":"v"}] 或 rows: {"path":"/data"} }\n`
   prompt += `数据绑定：属性值可以是字面量或 {"path":"/dataKey"} 来引用 dataModel 中的数据。\n\n`
 
-  // Task execution protocol
+  // ── Task execution protocol ──
+  prompt += `## 问题探索规范（强制要求）\n`
+  prompt += `当遇到复杂问题或无法直接给出答案时，你**必须**遵循以下流程：\n\n`
+  prompt += `1. **探索阶段**：使用工具调查问题来源、产生原因、影响范围\n`
+  prompt += `   - 查看相关数据文件、日志、配置，收集上下文信息\n`
+  prompt += `   - 分析根因，不要只看表面现象\n`
+  prompt += `   - 在对话中明确输出分析结论：问题是什么、为什么发生、有哪些解决方向\n`
+  prompt += `2. **方案确认阶段**：列出你的分析结论和拟定的执行方案（包括预计要做什么、产出什么）\n`
+  prompt += `   - 明确告诉用户你的计划和预期结果\n`
+  prompt += `   - **等待用户确认后**再进入规划阶段，不要在没有得到用户同意的情况下直接执行\n`
+  prompt += `3. **规划阶段**：用户确认方案后，调用 todo_write 列出执行步骤\n`
+  prompt += `4. **执行阶段**：逐项执行，每完成一项验证一项\n\n`
+
   prompt += `## 任务执行规范\n`
-  prompt += `当你的任务涉及多个分析步骤时，你**必须**遵循以下流程：\n\n`
-  prompt += `1. **规划阶段**：先调用 todo_write 工具，列出所有待执行的步骤（每个步骤一个 todo 项，status 设为 "pending"）\n`
-  prompt += `2. **执行阶段**：逐项处理任务：\n`
-  prompt += `   - 开始处理某项时，调用 todo_write 将该任务状态更新为 "in_progress"\n`
-  prompt += `   - 一次只处理一个 "in_progress" 任务\n`
-  prompt += `   - 完成后立即调用 todo_write 将状态改为 "completed"\n`
-  prompt += `3. **完成阶段**：确保所有任务都标记为 "completed" 后再输出最终结果\n\n`
-  prompt += `示例：如果分析订单履约需要 4 个步骤（查询订单数据、分析库存状态、排查采购延迟、生成看板报告），你应该：\n`
-  prompt += `- 第一步：todo_write 创建 4 个 pending 任务\n`
-  prompt += `- 第二步：todo_write 将任务1标记为 in_progress → 执行任务1 → todo_write 标记为 completed\n`
-  prompt += `- 依次处理所有任务\n\n`
+  prompt += `规划完成后，严格按以下流程执行每个任务：\n\n`
+  prompt += `1. 调用 todo_write 将当前任务标记为 "in_progress"（一次只有一个 in_progress 任务）\n`
+  prompt += `2. 执行该任务需要的工具调用\n`
+  prompt += `3. 任务完成后，**先验证**：检查工具调用是否成功、产出数据是否完整\n`
+  prompt += `4. 验证通过后调用 todo_write 将该任务标记为 "completed"\n`
+  prompt += `5. **在回复末尾**输出标记 \`[TASK_COMPLETE:<任务id>]\` 表示此任务结束\n`
+  prompt += `6. 然后再开始下一个任务\n\n`
+
+  prompt += `## 任务输出分隔规范（强制要求）\n`
+  prompt += `每个任务的输出**必须**独立成段：\n`
+  prompt += `- 完成一个任务后，输出 \`[TASK_COMPLETE:任务id]\` 标记\n`
+  prompt += `- 标记之后，用空行分隔，再开始下一个任务的输出\n`
+  prompt += `- 每个任务的开头建议标注任务名称，如「## 任务1: 分析订单概况」\n`
+  prompt += `- 这样系统会将不同任务的输出分开展示，便于阅读\n\n`
+
+  prompt += `## 任务验证规范\n`
+  prompt += `每完成一个任务后，在标记 [TASK_COMPLETE] 之前：\n`
+  prompt += `1. 检查工具调用是否成功（无错误输出）\n`
+  prompt += `2. 检查产出数据是否完整（字段齐全、数值合理）\n`
+  prompt += `3. 补充验证结论：如「已验证：订单数据完整，共 60 条记录」\n`
+  prompt += `4. 如发现问题，修正后再标记完成，不要带着错误进入下一个任务\n\n`
 
   if (orders && orders.length > 0) {
     prompt += `\n用户已选中订单: ${orders.join(', ')}。你将收到这些订单的业务数据。\n`
@@ -1434,13 +1739,14 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
 
   prompt += `\n请用中文回复。`
 
-  prompt += `\n\n## 结构化输出要求`
+  prompt += `\n\n## 分析结果持久化（强制要求）`
 
-  prompt += `\n分析完成后，你必须在回复末尾输出一个 JSON 代码块，包含按「订单→问题分类→具体问题」层级组织的分析结果。格式如下：`
+  prompt += `\n你必须在回复末尾输出以下 JSON 代码块。系统会自动从中提取数据、创建分析任务并保存到数据库。`
+  prompt += `\n如果订单数据中没有某些字段，用 "N/A" 代替，但不要省略任何字段。`
+  prompt += `\n你不需要调用任何工具来创建分析任务——系统会在你输出 JSON 后自动处理。`
 
   prompt += `\n\n\`\`\`json
 {
-  "analysisTitle": "分析任务标题",
   "orders": [
     {
       "contractNumber": "订单系统编号（使用数据中的 id 字段值，如 HT202598001，不是 contractNumber 字段）",
@@ -1483,17 +1789,6 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
           ]
         }
       ],
-      "todos": [
-        {
-          "category": "发货任务",
-          "description": "任务描述",
-          "priority": "high",
-          "assignee": "负责人",
-          "dueDate": "2024-11-18",
-          "status": "pending",
-          "taskType": "agent"
-        }
-      ],
       "deliveryTables": [
         {
           "title": "销售合同订单",
@@ -1515,8 +1810,9 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `\n- priority 取值：high（高）、medium（中）、low（低）`
   prompt += `\n- status（待办）取值：pending（待处理）、progress（进行中）、overdue（已逾期）`
   prompt += `\n- taskType 取值：agent（Agent任务）、decision（决策任务）、manual（手工任务）`
-  prompt += `\n- 必须以 \`\`\`json 开头、\`\`\` 结尾，确保 JSON 可被程序解析`
-  prompt += `\n- 在 JSON 之前先输出自然语言的分析总结`
+  prompt += `\n- 回复最后必须包含上述 JSON 代码块，系统会自动从中提取数据并创建分析任务，没有这个 JSON 看板页面将无法展示分析结果`
+  prompt += `\n- 在 JSON 之前，用自然语言输出分析总结`
+  prompt += `\n- 禁止在分析阶段调用 generate_todos 工具，待办清单仅由用户在界面上点击按钮触发`
 
   return prompt
 }

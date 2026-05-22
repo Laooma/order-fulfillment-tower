@@ -18,8 +18,19 @@ export function getDb(): Database.Database {
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')
     initSchema(db)
+    runMigrations(db)
   }
   return db
+}
+
+function runMigrations(d: Database.Database) {
+  // Add tool_call_id / tool_calls_json columns to chat_messages (added for tool message support)
+  for (const [col, def] of [['tool_call_id', "TEXT DEFAULT ''"], ['tool_calls_json', "TEXT DEFAULT '[]'"]]) {
+    const exists = d.prepare(`SELECT name FROM pragma_table_info('chat_messages') WHERE name = ?`).get(col)
+    if (!exists) {
+      d.exec(`ALTER TABLE chat_messages ADD COLUMN ${col} ${def}`)
+    }
+  }
 }
 
 function initSchema(db: Database.Database) {
@@ -100,11 +111,20 @@ function initSchema(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS chat_messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+      role TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT '',
+      tool_call_id TEXT DEFAULT '',
+      tool_calls_json TEXT DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, id);
+
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
 
     CREATE TABLE IF NOT EXISTS orgs (
       id TEXT PRIMARY KEY,
@@ -569,34 +589,115 @@ export function saveCardDetail(problemId: string, detail: {
 
 // ── Chat message helpers ──
 
-export function getChatMessages(sessionId: string): Array<{ id: number; role: string; content: string; created_at: string }> {
+interface ChatMessageRow {
+  id: number; role: string; content: string; tool_call_id: string; tool_calls_json: string; created_at: string
+}
+
+export function getChatMessages(sessionId: string): ChatMessageRow[] {
   const d = getDb()
   return d.prepare(
-    'SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? ORDER BY id ASC'
+    'SELECT id, role, content, tool_call_id, tool_calls_json, created_at FROM chat_messages WHERE session_id = ? ORDER BY id ASC'
   ).all(sessionId) as any[]
 }
 
-export function saveChatMessage(sessionId: string, role: string, content: string) {
+export function saveChatMessage(
+  sessionId: string,
+  role: string,
+  content: string,
+  toolCallId?: string,
+  toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>,
+) {
   const d = getDb()
+  createChatSession(sessionId)
   d.prepare(
-    'INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)'
-  ).run(sessionId, role, content)
+    'INSERT INTO chat_messages (session_id, role, content, tool_call_id, tool_calls_json) VALUES (?, ?, ?, ?, ?)'
+  ).run(sessionId, role, content, toolCallId || '', toolCalls ? JSON.stringify(toolCalls) : '[]')
+  if (role === 'user') {
+    const row = d.prepare('SELECT title FROM chat_sessions WHERE id = ?').get(sessionId) as any
+    if (row && !row.title) {
+      const title = content.slice(0, 30).replace(/\n/g, ' ')
+      updateSessionTitle(sessionId, title)
+    }
+  }
+  touchChatSession(sessionId)
 }
 
-export function saveChatMessages(sessionId: string, messages: Array<{ role: string; content: string }>) {
+interface SaveMessage {
+  role: string
+  content: string
+  toolCallId?: string
+  toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>
+}
+
+export function saveChatMessages(sessionId: string, messages: SaveMessage[]) {
   const d = getDb()
+  createChatSession(sessionId)
+  // Only insert messages that don't already exist (by session + role + content + tool_call_id)
+  // This preserves messages saved individually (e.g. user messages from frontend) that may
+  // have been compacted from the in-memory session before the batch save runs.
+  const checkSql = `SELECT COUNT(*) as c FROM chat_messages
+    WHERE session_id = ? AND role = ? AND content = ? AND tool_call_id = ?`
+  const check = d.prepare(checkSql)
   const insert = d.prepare(
-    'INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)'
+    'INSERT INTO chat_messages (session_id, role, content, tool_call_id, tool_calls_json) VALUES (?, ?, ?, ?, ?)'
   )
+  let inserted = 0
   const transaction = d.transaction(() => {
-    // Clear existing messages for this session to avoid duplicates
-    d.prepare('DELETE FROM chat_messages WHERE session_id = ?').run(sessionId)
     for (const msg of messages) {
-      insert.run(sessionId, msg.role, msg.content)
+      const tcId = (msg as any).toolCallId || ''
+      const row = check.get(sessionId, msg.role, msg.content, tcId) as any
+      if (row && row.c > 0) continue // already saved
+      insert.run(
+        sessionId,
+        msg.role,
+        msg.content,
+        tcId,
+        (msg as any).toolCalls ? JSON.stringify((msg as any).toolCalls) : '[]',
+      )
+      inserted++
     }
   })
   transaction()
-  return { success: true, count: messages.length }
+  const firstUser = messages.find(m => m.role === 'user')
+  if (firstUser) {
+    const row = d.prepare('SELECT title FROM chat_sessions WHERE id = ?').get(sessionId) as any
+    if (row && !row.title) {
+      updateSessionTitle(sessionId, firstUser.content.slice(0, 30).replace(/\n/g, ' '))
+    }
+  }
+  touchChatSession(sessionId)
+  return { success: true, count: inserted }
+}
+
+// ── Session helpers ──
+
+export function createChatSession(sessionId: string): void {
+  const d = getDb()
+  d.prepare(
+    'INSERT OR IGNORE INTO chat_sessions (id) VALUES (?)'
+  ).run(sessionId)
+}
+
+export function getChatSessions(): Array<{ id: string; title: string; created_at: string; updated_at: string }> {
+  const d = getDb()
+  return d.prepare(
+    'SELECT id, title, created_at, updated_at FROM chat_sessions ORDER BY updated_at DESC'
+  ).all() as any[]
+}
+
+export function updateSessionTitle(sessionId: string, title: string): void {
+  const d = getDb()
+  d.prepare(
+    "UPDATE chat_sessions SET title = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+  ).run(title, sessionId)
+}
+
+// Also update session timestamp when a message is saved
+function touchChatSession(sessionId: string): void {
+  const d = getDb()
+  d.prepare(
+    "UPDATE chat_sessions SET updated_at = datetime('now','localtime') WHERE id = ?"
+  ).run(sessionId)
 }
 
 // ── Notification channel helpers ──

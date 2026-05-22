@@ -49,6 +49,19 @@ export interface ChatMessage {
   content: string
 }
 
+export interface CabinetPackage {
+  id: string
+  customer: string
+  status: 'designing' | 'stock_preparing' | 'pending_assembly' | 'assembling' | 'completed' | 'shipped'
+  designCompletedAt: string
+  stockReadyAt: string
+  estimatedAssemblyAt: string
+  actualAssemblyAt: string
+  assemblyCompletedAt: string
+  shipStatus: '未发货' | '已发货' | '部分发货'
+  factory: string
+}
+
 export interface WsMessage {
   type: 'chat' | 'chunk' | 'complete' | 'error'
   sessionId?: string

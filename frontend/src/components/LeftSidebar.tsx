@@ -26,26 +26,19 @@ export default function LeftSidebar() {
   const openTab = useTabStore((s) => s.openTab)
 
   useEffect(() => {
-    api.chat.sessions?.()
-      .then((res: { data: Array<{ sessionId: string; title: string; updatedAt: string }> }) => {
+    api.chat.sessions()
+      .then((res) => {
         if (res?.data) {
           setHistoryItems(res.data.slice(0, 20).map((s) => ({
-            id: s.sessionId,
+            id: s.id,
             title: s.title || '对话',
-            analysisId: s.sessionId,
-            time: s.updatedAt ? new Date(s.updatedAt).toLocaleDateString('zh-CN') : '',
+            analysisId: s.id,
+            time: s.updated_at ? new Date(s.updated_at).toLocaleDateString('zh-CN') : '',
           })))
         }
       })
       .catch(() => {
-        // fallback mock history
-        setHistoryItems([
-          { id: 'c1', title: 'HT20250003 异常分析', analysisId: 'c1', time: '05/19' },
-          { id: 'c2', title: '第Q1季度发货进度盘点', analysisId: 'c2', time: '05/19' },
-          { id: 'c3', title: '智慧制造HT20250005采购对齐', analysisId: 'c3', time: '05/18' },
-          { id: 'c4', title: '跨境电商订单风险评估', analysisId: 'c4', time: '05/18' },
-          { id: 'c5', title: '集团贸易到货确认', analysisId: 'c5', time: '05/17' },
-        ])
+        // fallback empty
       })
   }, [])
 
@@ -106,7 +99,7 @@ export default function LeftSidebar() {
               !expanded && 'collapsed'
             )}
             title={item.title}
-            onClick={() => navigate(`/analysis/${item.analysisId}`)}
+            onClick={() => navigate(`/?session=${item.analysisId}`)}
           >
             <span className="shell-sidebar-history-icon">
               {item.title.charAt(0)}

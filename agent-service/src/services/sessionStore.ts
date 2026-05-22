@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import type { Session, CompactionConfig, CompactionResult } from '../types'
+import type { Session, CompactionConfig, CompactionResult, TodoItem } from '../types'
 
 const DB_PATH = process.env.AGENT_DB_PATH || path.join(process.cwd(), 'data', 'agent-sessions.db')
 
@@ -81,6 +81,19 @@ export class SessionStore {
         created_at TEXT DEFAULT (datetime('now','localtime'))
       );
       CREATE INDEX IF NOT EXISTS idx_agent_compactions_session ON agent_compactions(session_key);
+
+      CREATE TABLE IF NOT EXISTS agent_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        content TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_progress','completed')),
+        blocked_by_json TEXT DEFAULT '[]',
+        verified INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id, task_id);
     `)
   }
 
@@ -200,6 +213,35 @@ export class SessionStore {
   getCumulativeInputTokens(key: string): number {
     const row = this.db.prepare('SELECT cumulative_input_tokens FROM agent_sessions WHERE id = ?').get(key) as any
     return row?.cumulative_input_tokens || 0
+  }
+
+  // ── Task persistence ──
+
+  saveTasks(sessionId: string, tasks: Array<{ id: string; content: string; status: string; blockedBy?: string[]; verified?: boolean }>): void {
+    const del = this.db.prepare('DELETE FROM agent_tasks WHERE session_id = ?')
+    const ins = this.db.prepare(
+      'INSERT INTO agent_tasks (session_id, task_id, content, status, blocked_by_json, verified) VALUES (?, ?, ?, ?, ?, ?)'
+    )
+    const tx = this.db.transaction(() => {
+      del.run(sessionId)
+      for (const t of tasks) {
+        ins.run(sessionId, t.id, t.content, t.status, JSON.stringify(t.blockedBy || []), t.verified === undefined ? null : (t.verified ? 1 : 0))
+      }
+    })
+    tx()
+  }
+
+  loadTasks(sessionId: string): TodoItem[] {
+    const rows = this.db.prepare(
+      'SELECT task_id, content, status, blocked_by_json, verified FROM agent_tasks WHERE session_id = ? ORDER BY id ASC'
+    ).all(sessionId) as any[]
+    return rows.map(r => ({
+      id: r.task_id,
+      content: r.content,
+      status: r.status as TodoItem['status'],
+      blockedBy: JSON.parse(r.blocked_by_json || '[]'),
+      verified: r.verified === null ? undefined : r.verified === 1,
+    }))
   }
 
   // ── Compaction ──
