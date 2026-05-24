@@ -196,6 +196,49 @@ const LIST_NOTIFICATION_CHANNELS_TOOL = {
   },
 }
 
+const FETCH_BIZ_DATA_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'fetch_biz_data',
+    description: '获取业务合同/装置/包/物料的层级数据及齐套分析结果。支持按合同ID或包ID查询。返回合同信息、物料列表、齐套汇总以及每个物料的每日供需平衡数据。',
+    parameters: {
+      type: 'object',
+      properties: {
+        contractId: { type: 'string', description: '合同ID，如 SC-2025-001' },
+        packageId: { type: 'string', description: '包ID，如 PKG-0101-SC-2025-001' },
+      },
+      required: [],
+    },
+  },
+}
+
+async function handleFetchBizData(args: Record<string, unknown>): Promise<string> {
+  const contractId = args.contractId as string | undefined
+  const packageId = args.packageId as string | undefined
+
+  if (!contractId && !packageId) {
+    return 'Error: Either contractId or packageId is required'
+  }
+
+  try {
+    const BACKEND_API = process.env.BACKEND_API_URL || 'http://localhost:3001/api'
+    let url: string
+    if (packageId) {
+      url = `${BACKEND_API}/biz-contracts/packages/${encodeURIComponent(packageId)}/kit-check`
+    } else {
+      url = `${BACKEND_API}/biz-contracts/${encodeURIComponent(contractId!)}/kit-check`
+    }
+    const response = await fetch(url)
+    if (!response.ok) {
+      return `Error fetching biz data: HTTP ${response.status}`
+    }
+    const data = await response.json()
+    return JSON.stringify(data, null, 2)
+  } catch (err: any) {
+    return `Error fetching biz data: ${err.message}`
+  }
+}
+
 const SHOW_ANALYSIS_RESULT_TOOL = {
   type: 'function' as const,
   function: {
@@ -216,20 +259,282 @@ const SHOW_ANALYSIS_RESULT_TOOL = {
   },
 }
 
+// Convert LLM's generic format to proper A2UI v0.9 wire format.
+// LLMs use many different conventions — this normalizer handles:
+//   - { type: "createSurface", surfaceId: "x" } → { createSurface: { surfaceId, catalogId } }
+//   - components as array OR object map → flattened array
+//   - nested children OR parent-based hierarchy → ID-list references
+//   - content/text, items/children, icon/name, spacing/gap, weight/fontWeight aliases
+//   - nested style objects → flattened to top-level props
+//   - box/hbox/vbox/hstack/vstack/grid/flex/badge/stat → A2UI component names
+function normalizeA2uiMessages(raw: unknown[]): unknown[] {
+  const CATALOG_ID = 'https://a2ui.org/specification/v0_9/basic_catalog.json'
+
+  const COMPONENT_MAP: Record<string, string> = {
+    flex: 'Column', vstack: 'Column', vbox: 'Column', box: 'Column',
+    hstack: 'Row', hbox: 'Row',
+    text: 'Text', card: 'Card', button: 'Button', table: 'Table',
+    chart: 'Chart', divider: 'Divider', tag: 'Tag', badge: 'Tag',
+    stat: 'Card', icon: 'Icon', image: 'Image',
+    progressbar: 'ProgressBar', progress: 'ProgressBar',
+    list: 'Column', grid: 'Row',
+  }
+
+  // Props that should stay as-is (not treated as style)
+  const KNOWN_PROPS = new Set([
+    'id', 'component', 'text', 'content', 'url', 'name', 'icon', 'variant',
+    'child', 'children', 'items', 'action', 'gap', 'spacing', 'padding',
+    'align', 'justify', 'width', 'height', 'value', 'max', 'columns', 'rows',
+    'xKey', 'yKeys', 'colors', 'labels', 'chartType', 'fit', 'description',
+    'fontWeight', 'weight', 'size', 'color', 'type', 'parent', 'surface', 'surfaceId',
+    'style', 'props', 'data', 'path', 'backgroundColor', 'borderRadius',
+    'boxShadow', 'borderLeft', 'border', 'marginTop', 'marginBottom',
+    'marginRight', 'marginLeft', 'margin', 'flex', 'minWidth', 'minHeight',
+    'maxWidth', 'maxHeight', 'display', 'position', 'overflow', 'alignItems',
+    'justifyContent', 'flexWrap', 'flexDirection', 'fontSize', 'lineHeight',
+    'textAlign', 'textDecoration', 'opacity', 'background',
+  ])
+
+  // Flatten a nested style object (and any other unknown objects) into top-level props
+  function flattenStyle(converted: Record<string, unknown>, src: Record<string, unknown>) {
+    if (src.style && typeof src.style === 'object') {
+      for (const [k, v] of Object.entries(src.style as Record<string, unknown>)) {
+        if (!(k in converted)) converted[k] = v
+      }
+      delete src.style
+    }
+    // Copy remaining unknown props to top-level
+    for (const k of Object.keys(src)) {
+      if (KNOWN_PROPS.has(k)) continue
+      if (k.startsWith('_') || typeof src[k] === 'function') continue
+      if (!(k in converted)) converted[k] = src[k]
+    }
+  }
+
+  // Convert a single LLM-style node to A2UI component shape (flat, no nested children).
+  function flattenNode(node: any, out: any[]): any {
+    if (!node || typeof node !== 'object') return node
+
+    const converted: Record<string, unknown> = {}
+    const src = { ...node }
+
+    // Ensure id exists
+    if (!src.id) src.id = `auto_${Math.random().toString(36).slice(2, 8)}`
+
+    // Map component type
+    if (typeof src.type === 'string') {
+      const lower = src.type.toLowerCase()
+      converted.component = COMPONENT_MAP[lower] || src.type
+      delete src.type
+    }
+
+    // Copy known A2UI props directly (preserving original values)
+    for (const k of Object.keys(src)) {
+      if (!KNOWN_PROPS.has(k)) continue
+      if (k === 'id' || k === 'component') continue // already handled
+      if (converted[k] !== undefined) continue
+    }
+
+    // id and component already set
+    if (src.id) converted.id = src.id
+
+    // Map content → text
+    if ('content' in src) { converted.text = src.content; delete src.content }
+    else if ('text' in src) { converted.text = src.text; delete src.text }
+
+    // Map icon → name for Icon component
+    if ('icon' in src) { converted.name = src.icon; delete src.icon }
+
+    // Map weight → fontWeight
+    if ('weight' in src) { converted.fontWeight = src.weight; delete src.weight }
+
+    // Map spacing → gap
+    if ('spacing' in src) { converted.gap = src.spacing; delete src.spacing }
+
+    // Map align → alignment
+    if ('align' in src) { converted.align = src.align; delete src.align }
+
+    // Map size: if string → variant, if number → keep as fontSize
+    if ('size' in src) {
+      if (typeof src.size === 'string') {
+        const sizeMap: Record<string, string> = { xs: 'caption', sm: 'body', md: 'body', lg: 'h3', xl: 'h2', '2xl': 'h2', '3xl': 'h1', '4xl': 'h1' }
+        converted.variant = sizeMap[String(src.size)] || 'body'
+      } else {
+        converted.fontSize = src.size // numeric size
+      }
+      delete src.size
+    }
+
+    // Map color: string aliases → hex
+    if ('color' in src) {
+      const cmap: Record<string, string> = { green: '#10b981', red: '#ef4444', orange: '#f59e0b', blue: '#3b82f6', yellow: '#eab308', purple: '#8b5cf6', gray: '#6b7280', grey: '#6b7280', muted: '#9ca3af', white: '#ffffff', black: '#000000' }
+      converted.color = cmap[String(src.color)] || src.color
+      delete src.color
+    }
+
+    // Copy direct known props
+    for (const k of ['url', 'name', 'variant', 'child', 'action', 'gap', 'padding', 'align', 'justify', 'width', 'height', 'value', 'max', 'columns', 'xKey', 'yKeys', 'colors', 'labels', 'chartType', 'fit', 'description', 'fontWeight']) {
+      if (k in src) { converted[k] = src[k]; delete src[k] }
+    }
+
+    // Resolve DynamicValue {path: "..."} for rows, value, data
+    for (const k of ['rows', 'value', 'data']) {
+      if (src[k] && typeof src[k] === 'object' && 'path' in (src[k] as Record<string, unknown>)) {
+        converted[k] = (src[k] as Record<string, unknown>).path
+        delete src[k]
+      }
+      if (k in src) { converted[k] = src[k]; delete src[k] }
+    }
+
+    // Flatten props object
+    if (src.props && typeof src.props === 'object') {
+      for (const [k, v] of Object.entries(src.props as Record<string, unknown>)) {
+        if (!(k in converted)) converted[k] = v
+      }
+      delete src.props
+    }
+
+    // Process children OR items (array-style nesting)
+    const childSource = src.children || src.items
+    if (Array.isArray(childSource)) {
+      const childIds: string[] = []
+      for (const child of childSource) {
+        // String children are id references to already-flattened nodes
+        if (typeof child === 'string') {
+          childIds.push(child)
+          continue
+        }
+        const flatChild = flattenNode(child, out)
+        if (flatChild?.id) childIds.push(String(flatChild.id))
+      }
+      if (converted.component === 'Card' && childIds.length === 1) {
+        converted.child = childIds[0]
+      } else if (childIds.length > 0) {
+        converted.children = childIds
+      }
+      delete src.children
+      delete src.items
+    }
+
+    // Flatten style object + remaining unknown props
+    flattenStyle(converted, src)
+
+    out.push(converted)
+    return converted
+  }
+
+  return raw.map((msg: any) => {
+    if (!msg || typeof msg !== 'object') return msg
+
+    // Already in A2UI wire format — return as-is
+    if (msg.createSurface || msg.updateComponents || msg.updateDataModel || msg.deleteSurface) {
+      return msg
+    }
+
+    const msgType = String(msg.type || '').toLowerCase()
+
+    if (msgType === 'createsurface' || msgType === 'create_surface') {
+      return {
+        version: 'v0.9',
+        createSurface: {
+          surfaceId: msg.surfaceId || msg.surface || 'main',
+          catalogId: CATALOG_ID,
+        },
+      }
+    }
+
+    if (msgType === 'updatecomponents' || msgType === 'update_components') {
+      const flatComponents: any[] = []
+
+      let compList: any[] = []
+      if (Array.isArray(msg.components)) {
+        compList = msg.components
+      } else if (msg.components && typeof msg.components === 'object') {
+        // LLM passed components as a map { id: node } → convert to array
+        compList = Object.entries(msg.components as Record<string, any>).map(([key, val]) => {
+          if (val && typeof val === 'object' && !val.id) val.id = key
+          return val
+        })
+      }
+
+      for (const comp of compList) {
+        flattenNode(comp, flatComponents)
+      }
+
+      // Rebuild hierarchy from parent references (LLMs often use "parent" instead of nesting)
+      const childrenMap = new Map<string, string[]>()
+      for (const comp of flatComponents) {
+        if (comp.parent && typeof comp.parent === 'string') {
+          const list = childrenMap.get(comp.parent) || []
+          list.push(comp.id as string)
+          childrenMap.set(comp.parent, list)
+        }
+      }
+      if (childrenMap.size > 0) {
+        for (const comp of flatComponents) {
+          const kids = childrenMap.get(comp.id as string)
+          if (kids && kids.length > 0) {
+            if (comp.component === 'Card' && kids.length === 1) {
+              comp.child = kids[0]
+            } else {
+              comp.children = kids
+            }
+          }
+          delete comp.parent // clean up
+        }
+      }
+
+      return {
+        version: 'v0.9',
+        updateComponents: {
+          surfaceId: msg.surfaceId || msg.surface || 'main',
+          components: flatComponents,
+        },
+      }
+    }
+
+    if (msgType === 'updatedatamodel' || msgType === 'update_data_model' || msgType === 'updatedata') {
+      return {
+        version: 'v0.9',
+        updateDataModel: {
+          surfaceId: msg.surfaceId || msg.surface || 'main',
+          path: msg.path,
+          value: msg.value ?? msg.data ?? {},
+        },
+      }
+    }
+
+    return msg
+  })
+}
+
 function handleShowAnalysisResult(args: Record<string, unknown>, sessionId: string, ws: WebSocket): string {
   const title = String(args.title || 'AI分析结果')
   const a2uiMessages = args.a2uiMessages
+  const taskId = args.taskId ? String(args.taskId) : undefined
 
   if (!Array.isArray(a2uiMessages) || a2uiMessages.length === 0) {
     return 'Error: a2uiMessages is required and must be a non-empty array'
   }
 
+  const normalized = normalizeA2uiMessages(a2uiMessages)
+
   send(ws, {
     type: 'a2ui_surface',
     sessionId,
     title,
-    messages: a2uiMessages,
+    messages: normalized,
+    taskId,
   })
+
+  // Persist A2UI data to backend if taskId is provided
+  if (taskId) {
+    fetch(`${BACKEND_API}/analysis/${taskId}/result`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ a2uiMessages: normalized }),
+    }).catch(err => console.error('[AgentLoop] Failed to save A2UI data:', err))
+  }
 
   return `分析结果页面"${title}"已生成并展示在"AI分析结果"标签页中。用户可在页面顶部切换到此标签页查看可视化分析内容。`
 }
@@ -238,12 +543,12 @@ const CREATE_ANALYSIS_TASK_TOOL = {
   type: 'function' as const,
   function: {
     name: 'create_analysis_task',
-    description: '创建分析任务记录。在完成订单履约分析后调用此工具，将分析结果持久化保存。系统会自动生成任务ID并在历史分析页面展示。',
+    description: '创建分析任务记录。在完成分析后调用此工具，将分析结果持久化保存。系统会自动生成任务ID并导航到分析任务页面。如需生成A2UI可视化报表，必须先调用此工具创建任务，再调用 show_analysis_result 并传入返回的 taskId。',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: '分析任务标题，格式如"HT202598001等2个订单履约分析"' },
-        result: { type: 'object', description: '结构化分析结果，包含 orders 数组（每个订单的 problemCategories、deliveryTables 等），格式参考系统 prompt 中的 JSON schema' },
+        title: { type: 'string', description: '分析任务标题，格式如"合同SC-2025-001齐套分析"或"HT202598001等2个订单履约分析"' },
+        result: { type: 'object', description: '结构化分析结果JSON对象（可选）。对于履约分析：包含 orders 数组；对于齐套分析：可省略此参数（数据由 show_analysis_result 的 A2UI 报表呈现）' },
       },
       required: ['title'],
     },
@@ -257,13 +562,14 @@ async function handleCreateAnalysisTask(
   skillName: string,
   orders: string[],
   sessionMessages?: Array<{ role: string; content: string }>,
-): Promise<string> {
+): Promise<{ text: string; taskId?: string }> {
   const title = String(args.title || `${skillName} — 履约分析`)
   const result = args.result as Record<string, unknown> | undefined
+  const a2uiMessages = args.a2uiMessages
 
   const task = await createAnalysisTask(title, skillName, orders)
   if (!task) {
-    return 'Error: 创建分析任务失败，请稍后重试'
+    return { text: 'Error: 创建分析任务失败，请稍后重试' }
   }
 
   // Primary: extract structured JSON from all assistant messages (same as old flow quality)
@@ -287,6 +593,16 @@ async function handleCreateAnalysisTask(
     console.warn('[AgentLoop] No structured JSON found for analysis task', task.id)
   }
 
+  // Save A2UI messages if provided
+  if (a2uiMessages && Array.isArray(a2uiMessages) && a2uiMessages.length > 0) {
+    const normalized = normalizeA2uiMessages(a2uiMessages)
+    fetch(`${BACKEND_API}/analysis/${task.id}/result`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ a2uiMessages: normalized }),
+    }).catch(err => console.error('[AgentLoop] Failed to save A2UI data:', err))
+  }
+
   send(ws, {
     type: 'analysis_created',
     sessionId,
@@ -295,7 +611,10 @@ async function handleCreateAnalysisTask(
     redirect: `/analysis/${task.id}`,
   })
 
-  return `分析任务已创建（ID: ${task.id}），用户可在历史分析页面查看。待办清单需由用户在界面点击按钮触发，请勿自动调用 generate_todos。`
+  return {
+    text: `分析任务已创建（ID: ${task.id}），用户可在历史分析页面查看。待办清单需由用户在界面点击按钮触发，请勿自动调用 generate_todos。`,
+    taskId: task.id,
+  }
 }
 
 const GENERATE_TODOS_TOOL = {
@@ -682,6 +1001,20 @@ async function fetchOrderData(orderIds: string[]): Promise<string> {
   }
 }
 
+async function fetchCabinetPackageData(ids: string[]): Promise<string> {
+  if (ids.length === 0) return ''
+  try {
+    const res = await fetch(`${BACKEND_API}/cabinet-packages?page=1&pageSize=100`)
+    if (!res.ok) return ''
+    const { data } = await res.json()
+    const relevant = data.filter((c: any) => ids.includes(c.id))
+    if (relevant.length === 0) return ''
+    return JSON.stringify(relevant, null, 2)
+  } catch {
+    return ''
+  }
+}
+
 async function createAnalysisTask(title: string, agentName: string, orders: string[]): Promise<{ id: string } | null> {
   try {
     const res = await fetch(`${BACKEND_API}/analysis`, {
@@ -745,7 +1078,7 @@ export async function handleAgentMessage(
   msg: AgentMessage,
   mcp: McpPool
 ): Promise<void> {
-  const { sessionId, message, orders, autoAssign, taskId } = msg
+  const { sessionId, message, orders, cabinetPackages, autoAssign, taskId } = msg
   if (!sessionId || !message) return
 
   // Abort any previous LLM call for this session and serialize processing
@@ -828,6 +1161,14 @@ export async function handleAgentMessage(
       userMessage += `\n\n[关联订单] ${orders.join(', ')}（注意：未能从系统获取到这些订单的详细数据）`
     }
   }
+  if (cabinetPackages && cabinetPackages.length > 0) {
+    const cabinetData = await fetchCabinetPackageData(cabinetPackages)
+    if (cabinetData) {
+      userMessage += `\n\n以下是与选中机柜包相关的数据（JSON 格式）：\n\`\`\`json\n${cabinetData}\n\`\`\``
+    } else {
+      userMessage += `\n\n[关联机柜包] ${cabinetPackages.join(', ')}`
+    }
+  }
 
   // Run before_chat hooks
   const beforeChatCtx = { sessionId, skillId: skill.id, skillName: skill.name, message: userMessage }
@@ -844,7 +1185,7 @@ export async function handleAgentMessage(
   // Determine whether to enable A2UI visualization
   const enableA2ui = shouldEnableA2ui(message, skill)
 
-  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'generate_todos', 'show_analysis_result', 'create_analysis_task'])
+  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'fetch_biz_data'])
     // Normalize function name for comparison (strip underscores, lowercase) to match built-in names
     const BUILTIN_NORMALIZED = new Set(Array.from(BUILTIN_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
     const MCP_TOOLS_RAW = mcp.getTools().map((t) => ({
@@ -864,6 +1205,8 @@ export async function handleAgentMessage(
       SAVE_HOOK_TOOL,
       SEND_NOTIFICATION_TOOL,
       LIST_NOTIFICATION_CHANNELS_TOOL,
+      FETCH_BIZ_DATA_TOOL,
+      CREATE_ANALYSIS_TASK_TOOL,
       GENERATE_TODOS_TOOL,
       ...(enableA2ui ? [SHOW_ANALYSIS_RESULT_TOOL] : []),
       ...mcpTools,
@@ -1073,6 +1416,26 @@ export async function handleAgentMessage(
             continue
           }
 
+          // Handle built-in create_analysis_task tool
+          if (normalizedName === 'createanalysistask') {
+            const result = await handleCreateAnalysisTask(toolArgs, ws, sessionId, skill.name, orders || [], session.messages)
+            if (result.taskId) {
+              analysisId = result.taskId
+            }
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: result.text,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: result.text.slice(0, 200),
+            })
+            continue
+          }
+
           // Handle built-in send_notification tool
           if (normalizedName === 'sendnotification') {
             const resultText = await handleSendNotification(toolArgs)
@@ -1103,6 +1466,23 @@ export async function handleAgentMessage(
               sessionId,
               toolName,
               toolOutput: resultText.slice(0, 200),
+            })
+            continue
+          }
+
+          // Handle built-in fetch_biz_data tool
+          if (normalizedName === 'fetchbizdata') {
+            const resultText = await handleFetchBizData(toolArgs)
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: '业务数据已获取',
             })
             continue
           }
@@ -1611,6 +1991,7 @@ function getToolLabel(name: string, args: Record<string, unknown>): string {
     case 'generate_todos': return `生成待办清单: ${String(args.taskId || '')}`
     case 'send_notification': return `发送通知: ${String(args.channelId || '')}`
     case 'list_notification_channels': return `获取通知渠道列表`
+    case 'fetch_biz_data': return `获取业务数据`
     default: return `调用 ${name}`
   }
 }
@@ -1655,7 +2036,8 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `- todo_write: 创建和管理任务列表\n`
   prompt += `- save_skill: 将新创建的 Skill 保存到文件系统（skillId、name、description、icon、color、prompt 六个必填参数，可选的 references 数组和 scripts 数组用于创建参考文档和脚本文件）\n`
   prompt += `- save_hook: 将新创建的 Hook 保存到文件系统（hookId、name、description、event、script 五个必填参数，enabled 和 matcher 可选）\n`
-  prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）\n`
+  prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）、taskId（可选，关联的分析任务ID）\n`
+  prompt += `- create_analysis_task: 创建分析任务记录，将分析结果持久化保存。参数：title（任务标题）、result（结构化分析结果JSON对象）。调用成功后会生成任务ID，用户可点击「查看分析结果」进入任务页面。在需要生成A2UI可视化报表时，必须先调用此工具创建任务，再调用 show_analysis_result 并传入 taskId\n`
   prompt += `- generate_todos: 【严格限制】仅在用户明确要求"生成待办清单"、"生成待办"、"创建执行任务"时调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办，非用户明确要求不得触发\n\n`
 
   // Add references and scripts info
@@ -1677,24 +2059,47 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   }
 
 
-  // A2UI component reference
-  prompt += `## A2UI 组件参考\n`
-  prompt += `show_analysis_result 的 a2uiMessages 是由以下三种消息组成的数组，依次发送：\n`
-  prompt += `1. createSurface: { version: "v0.9", createSurface: { surfaceId: "main", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } }\n`
-  prompt += `2. updateComponents: { version: "v0.9", updateComponents: { surfaceId: "main", components: [...] } }\n`
-  prompt += `3. updateDataModel: { version: "v0.9", updateDataModel: { surfaceId: "main", value: {...} } }\n\n`
-  prompt += `可用组件及属性（每个组件必须有 component 和 id）:\n`
-  prompt += `- Text: { component: "Text", text: "内容"|{"path":"/key"}, variant?: "h1"|"h2"|"h3"|"h4"|"h5"|"caption"|"body" }\n`
-  prompt += `- Row: { component: "Row", children: ["id1","id2"], justify?: "spaceBetween"|"center"|"start"|"end", align?: "center"|"start"|"end"|"stretch", gap?: 8 }\n`
-  prompt += `- Column: { component: "Column", children: [...], align?: "center"|"start"|"end"|"stretch", gap?: 8 }\n`
-  prompt += `- Card: { component: "Card", child: "childId" }\n`
-  prompt += `- Icon: { component: "Icon", name: "star"|"warning"|"check"|"info"|"error"|"trending_up"|"arrow_upward"|... }\n`
-  prompt += `- Button: { component: "Button", text: "按钮文字", variant?: "primary"|"danger" }\n`
-  prompt += `- Divider: { component: "Divider" }\n`
-  prompt += `- Tag: { component: "Tag", text: "标签", color?: "#hex" }\n`
-  prompt += `- ProgressBar: { component: "ProgressBar", value: 65, max?: 100, text?: "标签" }\n`
-  prompt += `- Table: { component: "Table", columns: [{key:"k","label":"列名"}], rows: [{"k":"v"}] 或 rows: {"path":"/data"} }\n`
-  prompt += `数据绑定：属性值可以是字面量或 {"path":"/dataKey"} 来引用 dataModel 中的数据。\n\n`
+  // A2UI component reference — SIMPLIFIED FORMAT (system auto-converts to A2UI v0.9 wire format)
+  prompt += `## A2UI 可视化报表\n`
+  prompt += `show_analysis_result 工具的 a2uiMessages 参数是一个数组，使用以下简化格式（系统会自动转换为 A2UI v0.9）：\n\n`
+  prompt += `**消息1 - 创建表面：** {"type":"createSurface","surfaceId":"main"}\n`
+  prompt += `**消息2 - 定义组件：** {"type":"updateComponents","surfaceId":"main","components":[...]}\n`
+  prompt += `**消息3 - 填充数据：** {"type":"updateDataModel","surfaceId":"main","value":{...}}\n\n`
+  prompt += `**组件类型（每个节点必须有 id 和 type）：**\n`
+  prompt += `- {"id":"t1","type":"Text","text":"标题","size":"3xl"}  可用 size: xs|sm|md|lg|xl|2xl|3xl\n`
+  prompt += `- {"id":"r1","type":"Row","children":["id1","id2"],"gap":8}\n`
+  prompt += `- {"id":"c1","type":"Column","children":[...],"gap":12}\n`
+  prompt += `- {"id":"card1","type":"Card","children":[{"id":"ct","type":"Text","text":"..."}]}\n`
+  prompt += `- {"id":"tbl1","type":"Table","columns":[{"key":"name","label":"名称"}],"rows":[{"name":"值"}]}\n`
+  prompt += `  表格数据也可用数据绑定: "rows":{"path":"/tableData"} (需在 updateDataModel 中提供)\n`
+  prompt += `- {"id":"ch1","type":"Chart","chartType":"bar","xKey":"date","yKeys":["supply","demand"],"colors":["#3b82f6","#ef4444"],"labels":["供给","需求"],"rows":[{"date":"05-22","supply":10,"demand":5}]}\n`
+  prompt += `  Chart 也可用数据绑定: "rows":{"path":"/chartData"}\n`
+  prompt += `  Chart 类型: "bar"=柱状图, "line"=折线图, "mixed"=混合图（第一个 yKey 用柱状，其余用折线）\n`
+  prompt += `- {"id":"tag1","type":"Tag","text":"标签文字","color":"#10b981"}\n`
+  prompt += `- {"id":"prog1","type":"ProgressBar","value":65,"max":100,"text":"65%"}\n`
+  prompt += `- {"id":"div1","type":"Divider"}\n\n`
+  prompt += `**常用颜色：** 绿色:#10b981 红色:#ef4444 橙色:#f59e0b 蓝色:#3b82f6 灰色:#6b7280\n\n`
+  prompt += `**完整示例（齐套分析看板）：**\n`
+  prompt += `\`\`\`json\n`
+  prompt += `[\n`
+  prompt += `  {"type":"createSurface","surfaceId":"main"},\n`
+  prompt += `  {"type":"updateComponents","surfaceId":"main","components":[\n`
+  prompt += `    {"id":"root","type":"Column","children":["cards","table1","chart1"],"gap":16},\n`
+  prompt += `    {"id":"cards","type":"Row","children":["c1","c2","c3"],"gap":12},\n`
+  prompt += `    {"id":"c1","type":"Card","children":[\n`
+  prompt += `      {"id":"c1t","type":"Column","children":["c1l","c1v"],"gap":4},\n`
+  prompt += `      {"id":"c1l","type":"Text","text":"齐套率","size":"sm"},\n`
+  prompt += `      {"id":"c1v","type":"Text","text":"50%","size":"3xl"}\n`
+  prompt += `    ]},\n`
+  prompt += `    {"id":"c2","type":"Card","children":[...]},\n`
+  prompt += `    {"id":"c3","type":"Card","children":[...]},\n`
+  prompt += `    {"id":"table1","type":"Table","columns":[{"key":"date","label":"日期"},{"key":"supply","label":"供给"}],"rows":{"path":"/tableData"}},\n`
+  prompt += `    {"id":"chart1","type":"Chart","chartType":"bar","xKey":"date","yKeys":["supply","demand"],"colors":["#3b82f6","#ef4444"],"labels":["供给","需求"],"rows":{"path":"/chartData"}}\n`
+  prompt += `  ]},\n`
+  prompt += `  {"type":"updateDataModel","surfaceId":"main","value":{"tableData":[...],"chartData":[...]}}\n`
+  prompt += `]\n`
+  prompt += `\`\`\`\n`
+  prompt += `注意：Card 的 children 数组第一个子节点作为 card 内容；数据绑定用 {"path":"/key"} 引用 updateDataModel 中的数据。\n\n`
 
   // ── Task execution protocol ──
   prompt += `## 问题探索规范（强制要求）\n`
@@ -1739,13 +2144,24 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
 
   prompt += `\n请用中文回复。`
 
-  prompt += `\n\n## 分析结果持久化（强制要求）`
+  // ── Analysis result persistence — format depends on skill type ──
+  const isKitCheck = skill.id === 'kit-check-analysis'
 
-  prompt += `\n你必须在回复末尾输出以下 JSON 代码块。系统会自动从中提取数据、创建分析任务并保存到数据库。`
-  prompt += `\n如果订单数据中没有某些字段，用 "N/A" 代替，但不要省略任何字段。`
-  prompt += `\n你不需要调用任何工具来创建分析任务——系统会在你输出 JSON 后自动处理。`
+  if (isKitCheck) {
+    // Kit-check: LLM must call create_analysis_task tool explicitly with package-level result
+    prompt += `\n\n## 分析结果持久化（强制要求）`
+    prompt += `\n你必须调用 \`create_analysis_task\` 工具来创建分析任务。该工具的 result 参数使用包级齐套看板 JSON 格式（以包为卡片、以齐套状态为泳道）。`
+    prompt += `\n格式详见你的 skill prompt 中的「create_analysis_task 的 result 参数」章节。`
+    prompt += `\n不要依赖系统自动提取——你必须主动调用 create_analysis_task 工具。`
+  } else {
+    // Default: order fulfillment analysis — auto-extract from assistant response
+    prompt += `\n\n## 分析结果持久化（强制要求）`
 
-  prompt += `\n\n\`\`\`json
+    prompt += `\n你必须在回复末尾输出以下 JSON 代码块。系统会自动从中提取数据、创建分析任务并保存到数据库。`
+    prompt += `\n如果订单数据中没有某些字段，用 "N/A" 代替，但不要省略任何字段。`
+    prompt += `\n你不需要调用任何工具来创建分析任务——系统会在你输出 JSON 后自动处理。`
+
+    prompt += `\n\n\`\`\`json
 {
   "orders": [
     {
@@ -1803,15 +2219,16 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
 }
 \`\`\``
 
-  prompt += `\n\n注意事项：`
-  prompt += `\n- statusClass 取值：blue（待发货）、green（进行中）、orange（待确认）`
-  prompt += `\n- type 取值：1=问题类型1, 2=问题类型2, 3=问题类型3, 4=问题类型4`
-  prompt += `\n- variant 取值：pill（普通标签）、urgent（紧急）、normal（常规）`
-  prompt += `\n- priority 取值：high（高）、medium（中）、low（低）`
-  prompt += `\n- status（待办）取值：pending（待处理）、progress（进行中）、overdue（已逾期）`
-  prompt += `\n- taskType 取值：agent（Agent任务）、decision（决策任务）、manual（手工任务）`
-  prompt += `\n- 回复最后必须包含上述 JSON 代码块，系统会自动从中提取数据并创建分析任务，没有这个 JSON 看板页面将无法展示分析结果`
-  prompt += `\n- 在 JSON 之前，用自然语言输出分析总结`
+    prompt += `\n\n注意事项：`
+    prompt += `\n- statusClass 取值：blue（待发货）、green（进行中）、orange（待确认）`
+    prompt += `\n- type 取值：1=问题类型1, 2=问题类型2, 3=问题类型3, 4=问题类型4`
+    prompt += `\n- variant 取值：pill（普通标签）、urgent（紧急）、normal（常规）`
+    prompt += `\n- priority 取值：high（高）、medium（中）、low（低）`
+    prompt += `\n- status（待办）取值：pending（待处理）、progress（进行中）、overdue（已逾期）`
+    prompt += `\n- taskType 取值：agent（Agent任务）、decision（决策任务）、manual（手工任务）`
+    prompt += `\n- 回复最后必须包含上述 JSON 代码块，系统会自动从中提取数据并创建分析任务，没有这个 JSON 看板页面将无法展示分析结果`
+    prompt += `\n- 在 JSON 之前，用自然语言输出分析总结`
+  }
   prompt += `\n- 禁止在分析阶段调用 generate_todos 工具，待办清单仅由用户在界面上点击按钮触发`
 
   return prompt

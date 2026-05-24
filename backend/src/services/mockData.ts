@@ -211,8 +211,10 @@ function generateCabinetPackages(count: number): CabinetPackage[] {
       status = 'designing'
     }
 
+    const orderId = randItem(mockOrders).id
+
     packages.push({
-      id, customer, status, factory,
+      id, orderId, customer, status, factory,
       designCompletedAt: hasDesign ? designCompletedAt : '',
       stockReadyAt,
       estimatedAssemblyAt,

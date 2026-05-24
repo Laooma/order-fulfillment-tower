@@ -14,3 +14,8 @@ export const useA2uiStore = create<A2uiStore>((set) => ({
   setSurface: (title, messages) => set({ title, messages }),
   clear: () => set({ title: '', messages: [] }),
 }))
+
+// Expose for debugging
+if (typeof window !== 'undefined') {
+  (window as any).__a2uiStore = useA2uiStore
+}

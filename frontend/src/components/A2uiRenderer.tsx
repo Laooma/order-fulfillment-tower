@@ -217,7 +217,7 @@ function TextView({ text, variant, color }: { text: string; variant?: string; co
   }
 }
 
-function ButtonView({ text, variant, action }: { text: string; variant?: string; action?: { name: string; context?: Record<string, unknown> } }) {
+function ButtonView({ text, variant, action: _action }: { text: string; variant?: string; action?: { name: string; context?: Record<string, unknown> } }) {
   const isPrimary = variant === 'primary'
   const isDanger = variant === 'danger'
   return (
@@ -243,7 +243,7 @@ const SUPPORTED_COMPONENTS = new Set([
   'Text', 'Image', 'Icon', 'Video', 'AudioPlayer',
   'Row', 'Column', 'Card', 'Divider', 'Button',
   'List', 'Modal', 'CheckBox', 'TextField', 'Slider',
-  'Tag', 'ProgressBar', 'Table',
+  'Tag', 'ProgressBar', 'Table', 'Chart',
 ])
 
 // Recursive component renderer
@@ -347,6 +347,7 @@ function ComponentRenderer({
 
     case 'Card': {
       const child = comp.child as string | undefined
+      const children = comp.children as string[] | undefined
       return (
         <div style={{
           background: 'var(--color-surface, #fff)',
@@ -356,6 +357,7 @@ function ComponentRenderer({
           boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
         }}>
           {child ? <ComponentRenderer compId={child} surface={surface} onAction={onAction} /> : null}
+          {!child && children ? renderChildren(children) : null}
         </div>
       )
     }
@@ -473,8 +475,9 @@ function ComponentRenderer({
 
     case 'Table': {
       const columns = comp.columns as Array<{ key: string; label: string; width?: string; align?: string }> | undefined
-      const rows = (comp.rows as DynamicValue<Record<string, unknown>[]>) || (comp.path as string)
-      const data = Array.isArray(rows) ? rows : getByPath(dm, String(rows || '')) as Record<string, unknown>[]
+      const rowsRaw = (comp.rows as DynamicValue<Record<string, unknown>[]>) || (comp.path as string)
+      const rowsStr = typeof rowsRaw === 'string' ? rowsRaw : (rowsRaw && typeof rowsRaw === 'object' && 'path' in rowsRaw ? String((rowsRaw as any).path) : '')
+      const data = Array.isArray(rowsRaw) ? rowsRaw : getByPath(dm, rowsStr) as Record<string, unknown>[]
 
       if (!columns || !Array.isArray(data)) return null
 
@@ -520,6 +523,138 @@ function ComponentRenderer({
               ))}
             </tbody>
           </table>
+        </div>
+      )
+    }
+
+    case 'Chart': {
+      const chartType = (comp.chartType as string) || 'bar'
+      const xKey = comp.xKey as string || 'date'
+      const yKeys = comp.yKeys as string[] || []
+      const colors = (comp.colors as string[]) || ['#3b82f6', '#ef4444', '#10b981', '#f59e0b']
+      const labels = (comp.labels as string[]) || yKeys
+      const height = (comp.rows as any)?.height || (comp.height as number) || 280
+      const rowsRaw = comp.rows
+      const data = Array.isArray(rowsRaw)
+        ? rowsRaw as Record<string, unknown>[]
+        : getByPath(dm, typeof rowsRaw === 'string' ? rowsRaw : String((rowsRaw as any)?.path || ''))
+
+      if (!Array.isArray(data) || data.length === 0 || yKeys.length === 0) return null
+
+      const svgW = 700
+      const svgH = height
+      const pad = { top: 30, right: 20, bottom: 50, left: 55 }
+      const chartW = svgW - pad.left - pad.right
+      const chartH = svgH - pad.top - pad.bottom
+
+      // Find Y range
+      let yMax = 0
+      let yMin = 0
+      for (const row of data) {
+        for (const yk of yKeys) {
+          const v = Number(row[yk]) || 0
+          if (v > yMax) yMax = v
+          if (v < yMin) yMin = v
+        }
+      }
+      if (yMax === 0) yMax = 10
+      const yRange = yMax - yMin || 1
+      const yTicks = 5
+
+      // X axis labels (show every Nth to avoid crowding)
+      const xStep = Math.max(1, Math.floor(data.length / 12))
+
+      return (
+        <div style={{ width: '100%', overflow: 'auto' }}>
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
+            {yKeys.map((yk, i) => (
+              <span key={yk} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <span style={{ width: 12, height: 12, borderRadius: 3, background: colors[i] || '#888', flexShrink: 0 }} />
+                {labels[i] || yk}
+              </span>
+            ))}
+          </div>
+          <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{ width: '100%', maxWidth: svgW, height: svgH, fontFamily: 'sans-serif' }}>
+            {/* Y axis gridlines + labels */}
+            {Array.from({ length: yTicks + 1 }, (_, i) => {
+              const y = pad.top + (chartH * i) / yTicks
+              const val = yMax - (yRange * i) / yTicks
+              return (
+                <g key={`y-${i}`}>
+                  <line x1={pad.left} y1={y} x2={pad.left + chartW} y2={y} stroke="#e5e7eb" strokeWidth="1" />
+                  <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#6b7280">{Math.round(val)}</text>
+                </g>
+              )
+            })}
+
+            {/* Bars, Lines, or Mixed */}
+            {chartType === 'bar' || chartType === 'mixed' ? (
+              // Bar layer: all yKeys for bar type, first yKey only for mixed
+              (chartType === 'bar' ? yKeys : yKeys.slice(0, 1)).map((yk, yi) => (
+                <g key={`bars-${yk}`}>
+                  {data.map((row, ri) => {
+                    const groupW = chartW / data.length
+                    const barCount = chartType === 'bar' ? yKeys.length : 1
+                    const barW = Math.max(2, (groupW * 0.7) / barCount)
+                    const groupX = pad.left + ri * groupW
+                    const v = Number(row[yk]) || 0
+                    const barH = Math.max(0, (v / yRange) * chartH)
+                    const barX = groupX + groupW * 0.15 + yi * barW
+                    const barY = pad.top + chartH - barH
+                    return (
+                      <rect key={`bar-${ri}`} x={barX} y={barY} width={barW} height={barH} fill={colors[yi] || '#888'} rx="1">
+                        <title>{`${labels[yi] || yk}: ${v}`}</title>
+                      </rect>
+                    )
+                  })}
+                </g>
+              ))
+            ) : null}
+            {/* Line layer: all yKeys for line type, second yKey onward for mixed */}
+            {(chartType === 'line' || chartType === 'mixed') ? (
+              (chartType === 'line' ? yKeys : yKeys.slice(1)).map((yk, yi) => {
+                const colorIdx = chartType === 'line' ? yi : yi + 1
+                const points = data.map((row, ri) => {
+                  const x = pad.left + (chartW * ri) / Math.max(1, data.length - 1)
+                  const v = Number(row[yk]) || 0
+                  const y = pad.top + chartH - ((v - yMin) / yRange) * chartH
+                  return `${x},${y}`
+                }).join(' ')
+                return (
+                  <g key={`line-${yk}`}>
+                    <polyline points={points} fill="none" stroke={colors[colorIdx] || '#888'} strokeWidth="2" />
+                    {data.map((row, ri) => {
+                      const x = pad.left + (chartW * ri) / Math.max(1, data.length - 1)
+                      const v = Number(row[yk]) || 0
+                      const y = pad.top + chartH - ((v - yMin) / yRange) * chartH
+                      return (
+                        <circle key={`dot-${ri}`} cx={x} cy={y} r="3" fill={colors[colorIdx] || '#888'}>
+                          <title>{`${labels[colorIdx] || yk}: ${v}`}</title>
+                        </circle>
+                      )
+                    })}
+                  </g>
+                )
+              })
+            ) : null}
+            {/* X axis labels — shared */}
+            {data.map((row, ri) => {
+              const groupW = chartW / data.length
+              const x = pad.left + ri * groupW + groupW / 2
+              if (ri % xStep !== 0 && ri !== data.length - 1) return null
+              return (
+                <text key={`xl-${ri}`} x={x} y={pad.top + chartH + 18} textAnchor="middle" fontSize="10" fill="#6b7280">
+                  {String(row[xKey] || '').slice(5)}
+                </text>
+              )
+            })}
+
+            {/* X axis line */}
+            <line x1={pad.left} y1={pad.top + chartH} x2={pad.left + chartW} y2={pad.top + chartH} stroke="#d1d5db" strokeWidth="1" />
+            {/* Y axis line */}
+            <line x1={pad.left} y1={pad.top} x2={pad.left} y2={pad.top + chartH} stroke="#d1d5db" strokeWidth="1" />
+          </svg>
         </div>
       )
     }

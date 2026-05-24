@@ -21,6 +21,7 @@ export interface WsMessage {
   redirect?: string
   hasStructuredResult?: boolean
   orders?: string[]
+  cabinetPackages?: string[]
   images?: Array<{ dataUrl: string; name: string }>
   taskId?: string
   taskContent?: string

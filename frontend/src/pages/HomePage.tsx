@@ -16,6 +16,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<'orders' | 'cabinets'>('orders')
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set())
+  const [selectedCabinets, setSelectedCabinets] = useState<Set<string>>(new Set())
   const [showFilterModal, setShowFilterModal] = useState(false)
 
   // ── Filter State ──
@@ -116,8 +117,21 @@ export default function HomePage() {
     })
   }, [])
 
+  const toggleCabinet = useCallback((id: string) => {
+    setSelectedCabinets((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
   const handleClearOrders = useCallback(() => {
     setSelectedOrders(new Set())
+  }, [])
+
+  const handleClearCabinets = useCallback(() => {
+    setSelectedCabinets(new Set())
   }, [])
 
   // Set page config for A2UI analysis surface
@@ -128,7 +142,9 @@ export default function HomePage() {
       page: 'home',
       sessionId: 'home',
       orders: Array.from(selectedOrders),
+      cabinetPackages: Array.from(selectedCabinets),
       onClearOrders: handleClearOrders,
+      onClearCabinets: handleClearCabinets,
       onAnalysisNavigate: (path) => navigate(path),
       onA2uiSurface: (data: { title: string; messages: unknown[] }) => {
         a2uiStore.setSurface(data.title, data.messages as any[])
@@ -138,7 +154,7 @@ export default function HomePage() {
     return () => {
       setPageConfig(null)
     }
-  }, [selectedOrders, handleClearOrders, navigate, setPageConfig])
+  }, [selectedOrders, selectedCabinets, handleClearOrders, handleClearCabinets, navigate, setPageConfig])
 
   return (
     <div className="flex h-full">
@@ -492,6 +508,9 @@ export default function HomePage() {
           <div className="toolbar-left">
             <span className="total-count">共 <strong>{cabinetTotal}</strong> 个机柜包</span>
           </div>
+          <div className="toolbar-right">
+            <button className="btn btn-outline" style={{ height: 26, fontSize: 11 }}>批量添加至对话</button>
+          </div>
         </div>
 
         {/* Cabinet Data Table */}
@@ -499,8 +518,12 @@ export default function HomePage() {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: 36, padding: '8px' }}>
+                  <input type="checkbox" />
+                </th>
                 <th style={{ width: 24 }}>#</th>
                 <th style={{ width: 130 }}>机柜包编号</th>
+                <th style={{ width: 130 }}>所属订单编号</th>
                 <th style={{ width: 140 }}>客户</th>
                 <th style={{ width: 80 }}>状态</th>
                 <th style={{ width: 100 }}>设计完成</th>
@@ -514,9 +537,9 @@ export default function HomePage() {
             </thead>
             <tbody>
               {cabinetLoading ? (
-                <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>加载中...</td></tr>
+                <tr><td colSpan={13} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>加载中...</td></tr>
               ) : cabinetPackages.length === 0 ? (
-                <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>暂无数据</td></tr>
+                <tr><td colSpan={13} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>暂无数据</td></tr>
               ) : (
                 cabinetPackages.map((c: any, i: number) => {
                   const statusLabel: Record<string, string> = {
@@ -528,11 +551,19 @@ export default function HomePage() {
                     assembling: 'purple', completed: 'green', shipped: 'teal',
                   }
                   return (
-                  <tr key={c.id}>
+                  <tr key={c.id} className={cn(selectedCabinets.has(c.id) && 'selected')}>
+                    <td style={{ padding: '7px' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedCabinets.has(c.id)}
+                        onChange={() => toggleCabinet(c.id)}
+                      />
+                    </td>
                     <td style={{ color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
                       {String((cabinetPage - 1) * cabinetPageSize + i + 1).padStart(2, '0')}
                     </td>
                     <td><span className="order-num">{c.id}</span></td>
+                    <td><span className="order-num">{c.orderId}</span></td>
                     <td><span className="company-name" title={c.customer}>{c.customer}</span></td>
                     <td>
                       <span className="tag-chip" style={{

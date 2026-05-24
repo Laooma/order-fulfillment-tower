@@ -21,6 +21,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
+    cache: 'no-store',
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
@@ -143,6 +144,22 @@ export const api = {
   cabinetPackages: {
     list: (params?: Record<string, string>) =>
       request<PaginatedResponse<any>>(`/cabinet-packages?${new URLSearchParams(params).toString()}`),
+  },
+  bizContracts: {
+    list: (params?: Record<string, string>) =>
+      request<PaginatedResponse<any>>(`/biz-contracts?${new URLSearchParams(params).toString()}`),
+    get: (id: string) => request<any>(`/biz-contracts/${id}`),
+    devices: (id: string) => request<{ data: any[] }>(`/biz-contracts/${id}/devices`),
+    packages: (id: string) => request<{ data: any[] }>(`/biz-contracts/${id}/packages`),
+    kitCheck: (id: string) => request<any>(`/biz-contracts/${id}/kit-check`),
+  },
+  bizPackages: {
+    get: (id: string) => request<any>(`/biz-contracts/packages/${id}`),
+    kitCheck: (id: string) => request<any>(`/biz-contracts/packages/${id}/kit-check`),
+  },
+  bizMaterials: {
+    get: (id: string) => request<any>(`/biz-contracts/materials/${id}`),
+    dailyBalance: (id: string) => request<any>(`/biz-contracts/materials/${id}/daily-balance`),
   },
   tasks: {
     list: (params?: Record<string, string>) =>

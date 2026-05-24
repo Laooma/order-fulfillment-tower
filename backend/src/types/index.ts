@@ -51,6 +51,7 @@ export interface ChatMessage {
 
 export interface CabinetPackage {
   id: string
+  orderId: string
   customer: string
   status: 'designing' | 'stock_preparing' | 'pending_assembly' | 'assembling' | 'completed' | 'shipped'
   designCompletedAt: string
@@ -70,4 +71,61 @@ export interface WsMessage {
   analysisId?: string
   redirect?: string
   orders?: string[]
+  cabinetPackages?: string[]
+}
+
+export interface BizContract {
+  id: string
+  contract_no: string
+  customer: string
+  sign_date: string
+  status: string
+  amount: number
+}
+
+export interface BizDevice {
+  id: string
+  contract_id: string
+  device_name: string
+  device_code: string
+  quantity: number
+  planned_start: string
+  planned_finish: string
+}
+
+export interface BizPackage {
+  id: string
+  device_id: string
+  package_name: string
+  package_code: string
+  planned_production: string
+  quantity: number
+  status: string
+}
+
+export interface BizMaterial {
+  id: string
+  package_id: string
+  material_code: string
+  material_name: string
+  spec: string
+  unit: string
+  required_qty: number
+  current_stock: number
+  in_transit: number
+  shortage_qty: number
+  supplier: string
+  lead_time_days: number
+  kit_status: string
+}
+
+export interface BizMaterialDailyBalance {
+  id: string
+  material_id: string
+  date: string
+  supply_qty: number
+  demand_qty: number
+  balance: number
+  cumulative_balance: number
+  note: string
 }

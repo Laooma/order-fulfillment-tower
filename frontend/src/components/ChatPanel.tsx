@@ -114,7 +114,9 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const onAnalysisComplete = pageConfig?.onAnalysisComplete
   const onA2uiSurface = pageConfig?.onA2uiSurface
   const orders = pageConfig?.orders
+  const cabinetPackages = pageConfig?.cabinetPackages
   const onClearOrders = pageConfig?.onClearOrders
+  const onClearCabinets = pageConfig?.onClearCabinets
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID())
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -339,7 +341,12 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         needsNewMessageRef.current = true
       }
       if (msg.type === 'a2ui_surface' && msg.messages) {
-        onA2uiSurface?.({ title: msg.title || 'AI分析结果', messages: msg.messages })
+        if (msg.taskId && pageConfig?.page !== 'analysis') {
+          // Navigate to analysis task page — A2UI data was persisted to backend
+          onAnalysisNavigate?.(`/analysis/${msg.taskId}`)
+        } else {
+          onA2uiSurface?.({ title: msg.title || 'AI分析结果', messages: msg.messages })
+        }
       }
       if (msg.type === 'error') {
         setIsSending(false)
@@ -472,7 +479,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const doSend = useCallback((message: string, opts?: { taskId?: string; orders?: string[] }) => {
+  const doSend = useCallback((message: string, opts?: { taskId?: string; orders?: string[]; cabinetPackages?: string[] }) => {
     if (isSending) return
     setIsSending(true)
     setStreamStatus('thinking')
@@ -493,16 +500,21 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     elapsedTimer.current = setInterval(() => setElapsedMs(Date.now() - start), 200)
 
     const orderIds = opts?.orders && opts.orders.length > 0 ? opts.orders : undefined
+    const cabinetPackageIds = opts?.cabinetPackages && opts.cabinetPackages.length > 0 ? opts.cabinetPackages : undefined
     const quote = quotedMessage
     const fullMessage = quote
       ? `[引用AI回复]\n${quote.content}\n\n---\n${message}`
       : message
-    const displayMsg = orderIds
-      ? `【已选合同：${orderIds.join('、')}】\n${fullMessage}`
+    const prefixParts: string[] = []
+    if (orderIds) prefixParts.push(`已选合同：${orderIds.join('、')}`)
+    if (cabinetPackageIds) prefixParts.push(`已选机柜包：${cabinetPackageIds.join('、')}`)
+    const displayMsg = prefixParts.length > 0
+      ? `【${prefixParts.join('；')}】\n${fullMessage}`
       : fullMessage
     const images = attachedImages.length > 0 ? attachedImages.map(({ dataUrl, name }) => ({ dataUrl, name })) : undefined
     setMessages((prev) => [...prev, { role: 'user', content: displayMsg }])
     if (orderIds) onClearOrders?.()
+    if (cabinetPackageIds) onClearCabinets?.()
     setQuotedMessage(null)
     setAttachedImages([])
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -516,9 +528,10 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       message: fullMessage,
       taskId: opts?.taskId,
       orders: orderIds,
+      cabinetPackages: cabinetPackageIds,
       images,
     })
-  }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, sessionId, quotedMessage, attachedImages])
+  }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, onClearCabinets, sessionId, quotedMessage, attachedImages])
 
   // Register sendMessage in the store so pages can trigger sends programmatically
   useEffect(() => {
@@ -536,7 +549,8 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
 
     const msg = chatInput.trim()
     const orderIds = orders && orders.length > 0 ? orders : undefined
-    doSend(msg, { orders: orderIds })
+    const cabinetIds = cabinetPackages && cabinetPackages.length > 0 ? cabinetPackages : undefined
+    doSend(msg, { orders: orderIds, cabinetPackages: cabinetIds })
     setChatInput('')
   }
 
@@ -1067,6 +1081,20 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                 ))}
                 {onClearOrders && (
                   <button className="chat-order-clear" onClick={onClearOrders} title="清除已选合同">
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                      <path d="M1.5 1.5l7 7m-7 0l7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )}
+            {cabinetPackages && cabinetPackages.length > 0 && (
+              <div className="chat-order-chips">
+                {cabinetPackages.map((id) => (
+                  <span key={id} className="chat-order-chip" style={{ background: 'var(--color-accent-bg)', color: 'var(--color-accent)' }}>{id}</span>
+                ))}
+                {onClearCabinets && (
+                  <button className="chat-order-clear" onClick={onClearCabinets} title="清除已选机柜包">
                     <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
                       <path d="M1.5 1.5l7 7m-7 0l7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                     </svg>

@@ -72,6 +72,7 @@ interface AnalysisFullResult {
   agent: string
   status: string
   created_at: string
+  a2uiData?: Array<{ type: string; [key: string]: unknown }>
   orders: Array<{
     id: string
     contract_number: string
@@ -745,6 +746,10 @@ export default function AnalysisResultPage() {
           setActiveContractId(cs[0].id)
         }
       }
+      // Load persisted A2UI data if available
+      if (result.a2uiData && Array.isArray(result.a2uiData) && result.a2uiData.length > 0) {
+        setA2uiSurfaces({ title: result.title || 'AI分析结果', messages: result.a2uiData as A2uiMessageBase[] })
+      }
     } catch {
       // No results yet — that's OK
     } finally {
@@ -811,12 +816,12 @@ export default function AnalysisResultPage() {
       setTaskInfo(null)
       return
     }
-    api.tasks.get(taskId)
+    api.analysis.get(taskId)
       .then((data) => {
         setTaskInfo({
           id: data.id || taskId,
-          creator: data.assignee || '—',
-          updatedAt: data.updatedAt || data.createdAt || '—',
+          creator: data.initiator || '—',
+          updatedAt: data.completedAt || data.createdAt || '—',
           status: data.status || 'analyzing',
         })
       })

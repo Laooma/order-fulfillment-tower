@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { mockAnalysisTasks } from '../services/mockData'
-import { getDb, getAnalysisFull, saveAnalysisResult, getCardDetail, saveCardDetail, updateTaskStatus, getTaskStatus } from '../services/database'
+import { getDb, getAnalysisFull, saveAnalysisResult, saveA2uiData, getCardDetail, saveCardDetail, updateTaskStatus, getTaskStatus } from '../services/database'
 import { requireOperation } from '../middleware/auth'
 
 const router = Router()
@@ -203,10 +203,18 @@ router.post('/', requireOperation('create_analysis'), (req, res) => {
 // PUT /api/analysis/:id/result - save structured AI analysis result to DB
 router.put('/:id/result', (req, res) => {
   try {
-    const result = saveAnalysisResult(req.params.id, req.body)
+    const { a2uiMessages, ...rest } = req.body
+    // Save A2UI messages if provided
+    if (a2uiMessages && Array.isArray(a2uiMessages) && a2uiMessages.length > 0) {
+      saveA2uiData(req.params.id, a2uiMessages)
+    }
+    // Save structured result if orders are provided (not an A2UI-only call)
+    if (rest.orders) {
+      saveAnalysisResult(req.params.id, rest)
+    }
     // Update task status to analyzed (kanban ready, todos not yet generated)
     updateTaskStatus(req.params.id, 'analyzed')
-    res.json(result)
+    res.json({ success: true })
   } catch (err: any) {
     console.error('[Analysis] Save result error:', err)
     res.status(500).json({ error: err.message })

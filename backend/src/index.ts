@@ -7,6 +7,7 @@ import type { WsMessage } from './types'
 
 import ordersRouter from './routes/orders'
 import cabinetPackagesRouter from './routes/cabinet-packages'
+import bizContractsRouter from './routes/biz-contracts'
 import tasksRouter from './routes/tasks'
 import analysisRouter from './routes/analysis'
 import rbacRouter from './routes/rbac'
@@ -35,6 +36,7 @@ import { getChatMessages, saveChatMessage, saveChatMessages, getChatSessions, up
 // API routes
 app.use('/api/orders', ordersRouter)
 app.use('/api/cabinet-packages', cabinetPackagesRouter)
+app.use('/api/biz-contracts', bizContractsRouter)
 app.use('/api/tasks', tasksRouter)
 app.use('/api/analysis', analysisRouter)
 app.use('/api', rbacRouter)

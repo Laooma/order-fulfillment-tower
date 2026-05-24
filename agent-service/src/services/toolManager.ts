@@ -132,6 +132,20 @@ const BUILTIN_TOOLS: ToolConfig[] = [
     },
   },
   {
+    name: 'fetch_biz_data',
+    description: '获取业务合同/装置/包/物料的层级数据及齐套分析结果。支持按合同ID或包ID查询',
+    enabled: true,
+    source: 'built-in',
+    parameters: {
+      type: 'object',
+      properties: {
+        contractId: { type: 'string', description: '合同ID，如 SC-2025-001' },
+        packageId: { type: 'string', description: '包ID，如 PKG-0101-SC-2025-001' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'generate_todos',
     description: '为已有的分析任务生成待办执行清单',
     enabled: true,

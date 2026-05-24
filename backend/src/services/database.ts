@@ -19,6 +19,7 @@ export function getDb(): Database.Database {
     db.pragma('foreign_keys = ON')
     initSchema(db)
     runMigrations(db)
+    seedBizData(db)
   }
   return db
 }
@@ -31,6 +32,178 @@ function runMigrations(d: Database.Database) {
       d.exec(`ALTER TABLE chat_messages ADD COLUMN ${col} ${def}`)
     }
   }
+  // Add a2ui_data column to analysis_tasks
+  {
+    const exists = d.prepare(`SELECT name FROM pragma_table_info('analysis_tasks') WHERE name = 'a2ui_data'`).get()
+    if (!exists) {
+      d.exec(`ALTER TABLE analysis_tasks ADD COLUMN a2ui_data TEXT DEFAULT ''`)
+    }
+  }
+}
+
+function seedBizData(d: Database.Database) {
+  const count = (d.prepare('SELECT COUNT(*) as c FROM biz_contracts').get() as any)?.c || 0
+  if (count > 0) return
+
+  console.log('[DB] Seeding biz data...')
+
+  const now = new Date()
+  const fmt = (d: Date) => `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`
+  const fmtISO = (d: Date) => d.toISOString().slice(0, 10)
+
+  // ── 5 contracts ──
+  const contracts = [
+    { id: 'SC-2025-001', no: 'HT-SC-2025-001', cust: '上海成套厂', sign: '2025/01/15', status: '执行中', amt: 850 },
+    { id: 'SC-2025-002', no: 'HT-SC-2025-002', cust: '江苏成套厂', sign: '2025/02/20', status: '执行中', amt: 620 },
+    { id: 'SC-2025-003', no: 'HT-SC-2025-003', cust: '浙江成套厂', sign: '2025/03/10', status: '执行中', amt: 1200 },
+    { id: 'SC-2025-004', no: 'HT-SC-2025-004', cust: '广东成套厂', sign: '2025/01/28', status: '执行中', amt: 450 },
+    { id: 'SC-2025-005', no: 'HT-SC-2025-005', cust: '安徽成套厂', sign: '2025/04/05', status: '执行中', amt: 980 },
+  ]
+
+  // ── Devices per contract ──
+  const deviceTypes = [
+    { name: '控制系统装置', code: 'CTRL' },
+    { name: '配电柜装置', code: 'PD' },
+    { name: '变频驱动装置', code: 'VFD' },
+    { name: '仪表监测装置', code: 'INST' },
+    { name: '辅助供电装置', code: 'AUX' },
+  ]
+
+  // ── Package types ──
+  const packageTypes = [
+    { name: '控制柜包', code: 'CTRL-CAB' },
+    { name: '线缆包', code: 'CABLE' },
+    { name: '端子排包', code: 'TERM' },
+    { name: '电源模块包', code: 'PWR' },
+    { name: '通讯模块包', code: 'COMM' },
+    { name: '保护装置包', code: 'PROT' },
+    { name: '测量仪表包', code: 'MEAS' },
+    { name: '安装附件包', code: 'MNT' },
+  ]
+
+  // ── Materials pool ──
+  const materialPool = [
+    { code: 'DLQ-001', name: '塑壳断路器', spec: 'NSX250F 3P 250A', unit: '个', supplier: '施耐德电气', lead: 45 },
+    { code: 'DLQ-002', name: '微型断路器', spec: 'iC65N 2P 32A', unit: '个', supplier: '施耐德电气', lead: 30 },
+    { code: 'DLQ-003', name: '框架断路器', spec: 'MT40H1 3P 4000A', unit: '台', supplier: '施耐德电气', lead: 60 },
+    { code: 'JDQ-001', name: '中间继电器', spec: 'RXM4AB2BD 24VDC', unit: '个', supplier: '施耐德电气', lead: 21 },
+    { code: 'JDQ-002', name: '时间继电器', spec: 'RE22R1AMR 24-240V', unit: '个', supplier: '施耐德电气', lead: 28 },
+    { code: 'JCQ-001', name: '交流接触器', spec: 'LC1D80M7C 80A', unit: '个', supplier: '施耐德电气', lead: 35 },
+    { code: 'JCQ-002', name: '直流接触器', spec: 'LP1K0901BD 24VDC', unit: '个', supplier: '施耐德电气', lead: 35 },
+    { code: 'BP-001', name: '变频器', spec: 'ATV630D45N4 45kW', unit: '台', supplier: '施耐德电气', lead: 60 },
+    { code: 'BP-002', name: '软启动器', spec: 'ATS48D62Q 30kW', unit: '台', supplier: '施耐德电气', lead: 50 },
+    { code: 'PL-001', name: 'PLC控制器', spec: 'M580 BMEP584040', unit: '台', supplier: '施耐德电气', lead: 45 },
+    { code: 'PL-002', name: 'I/O模块', spec: 'BMXDDI6402K', unit: '个', supplier: '施耐德电气', lead: 30 },
+    { code: 'DZ-001', name: '接线端子', spec: 'UK2.5B 2.5mm²', unit: '片', supplier: '菲尼克斯', lead: 14 },
+    { code: 'DZ-002', name: '保险端子', spec: 'UK5-HESI 5A', unit: '片', supplier: '菲尼克斯', lead: 14 },
+    { code: 'DY-001', name: '开关电源', spec: 'SDR-240-24 240W', unit: '台', supplier: '明纬', lead: 21 },
+    { code: 'DY-002', name: 'UPS电源', spec: '3KVA 在线式', unit: '台', supplier: '山特', lead: 30 },
+    { code: 'TX-001', name: '屏蔽电缆', spec: 'RVVP 4×1.5mm²', unit: '米', supplier: '远东电缆', lead: 15 },
+    { code: 'TX-002', name: '控制电缆', spec: 'KVVP 7×1.5mm²', unit: '米', supplier: '远东电缆', lead: 15 },
+    { code: 'TX-003', name: '电力电缆', spec: 'YJV 3×70+1×35mm²', unit: '米', supplier: '远东电缆', lead: 20 },
+    { code: 'YB-001', name: '电流互感器', spec: 'LMZ1-0.66 300/5A', unit: '个', supplier: '正泰电器', lead: 21 },
+    { code: 'YB-002', name: '电压互感器', spec: 'JDZ-10 10kV/100V', unit: '台', supplier: '正泰电器', lead: 28 },
+    { code: 'YB-003', name: '多功能电力仪表', spec: 'PD194Z-9S4', unit: '台', supplier: '正泰电器', lead: 21 },
+    { code: 'KG-001', name: '转换开关', spec: 'LW5D-16/2', unit: '个', supplier: '正泰电器', lead: 14 },
+    { code: 'KG-002', name: '按钮开关', spec: 'LAY50-22D 红/绿', unit: '个', supplier: '正泰电器', lead: 7 },
+    { code: 'KG-003', name: '急停按钮', spec: 'LAY50-22Z 红', unit: '个', supplier: '正泰电器', lead: 7 },
+    { code: 'RD-001', name: '熔断器', spec: 'RT28N-32 32A', unit: '个', supplier: '正泰电器', lead: 10 },
+    { code: 'BL-001', name: '避雷器', spec: 'SPD AC 3P+N', unit: '台', supplier: '菲尼克斯', lead: 21 },
+    { code: 'GL-001', name: '隔离变压器', spec: 'BK-1000VA 380/220V', unit: '台', supplier: '上海变压器厂', lead: 35 },
+    { code: 'FS-001', name: '散热风扇', spec: '120×120×38mm 24VDC', unit: '个', supplier: '台达', lead: 10 },
+    { code: 'LX-001', name: '柜体线槽', spec: '60×80mm PVC', unit: '米', supplier: '上海电器', lead: 7 },
+    { code: 'LX-002', name: '导轨', spec: 'TH35-7.5 DIN导轨', unit: '米', supplier: '上海电器', lead: 7 },
+  ]
+
+  const insertContract = d.prepare(`INSERT INTO biz_contracts (id, contract_no, customer, sign_date, status, amount) VALUES (?,?,?,?,?,?)`)
+  const insertDevice = d.prepare(`INSERT INTO biz_devices (id, contract_id, device_name, device_code, quantity, planned_start, planned_finish) VALUES (?,?,?,?,?,?,?)`)
+  const insertPackage = d.prepare(`INSERT INTO biz_packages (id, device_id, package_name, package_code, planned_production, quantity, status) VALUES (?,?,?,?,?,?,?)`)
+  const insertMaterial = d.prepare(`INSERT INTO biz_materials (id, package_id, material_code, material_name, spec, unit, required_qty, current_stock, in_transit, shortage_qty, supplier, lead_time_days, kit_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  const insertBalance = d.prepare(`INSERT INTO biz_material_daily_balance (id, material_id, date, supply_qty, demand_qty, balance, cumulative_balance, note) VALUES (?,?,?,?,?,?,?,?)`)
+
+  let matSeq = 0
+  let balSeq = 0
+
+  const transaction = d.transaction(() => {
+    for (const c of contracts) {
+      insertContract.run(c.id, c.no, c.cust, c.sign, c.status, c.amt)
+
+      // 2-4 devices per contract
+      const deviceCount = 2 + Math.floor(Math.random() * 3)
+      const shuffledDevices = [...deviceTypes].sort(() => Math.random() - 0.5)
+      for (let di = 0; di < deviceCount; di++) {
+        const dt = shuffledDevices[di]
+        const devId = `DEV-${String(di + 1).padStart(3, '0')}-${c.id}`
+        const plannedStart = new Date(2025, 4 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 28))
+        const plannedFinish = new Date(plannedStart.getTime() + (30 + Math.floor(Math.random() * 60)) * 86400000)
+        insertDevice.run(devId, c.id, dt.name, `${dt.code}-${di+1}`, 1, fmt(plannedStart), fmt(plannedFinish))
+
+        // 2-5 packages per device
+        const pkgCount = 2 + Math.floor(Math.random() * 4)
+        const shuffledPkgs = [...packageTypes].sort(() => Math.random() - 0.5)
+        for (let pi = 0; pi < pkgCount; pi++) {
+          const pt = shuffledPkgs[pi]
+          const pkgId = `PKG-${String(di + 1).padStart(2, '0')}${String(pi + 1).padStart(2, '0')}-${c.id}`
+          // Planned production date: 30-90 days from now (some in past, some in future)
+          const prodDateOffset = -15 + Math.floor(Math.random() * 105)
+          const plannedProd = new Date(now.getTime() + prodDateOffset * 86400000)
+          insertPackage.run(pkgId, devId, pt.name, `${pt.code}-${di+1}${pi+1}`, fmtISO(plannedProd), 1, '待生产')
+
+          // 5-15 materials per package
+          const matCount = 5 + Math.floor(Math.random() * 11)
+          const shuffledMats = [...materialPool].sort(() => Math.random() - 0.5)
+          for (let mi = 0; mi < matCount && mi < shuffledMats.length; mi++) {
+            const mt = shuffledMats[mi]
+            matSeq++
+            const matId = `MAT-${String(matSeq).padStart(4, '0')}`
+            const requiredQty = Math.round((5 + Math.random() * 95)) // 5-100
+            // ~30% chance of shortage
+            const shortageRoll = Math.random()
+            let currentStock: number, inTransit: number
+            if (shortageRoll < 0.15) {
+              // Severe shortage: stock < 50%
+              currentStock = Math.round(requiredQty * (0.1 + Math.random() * 0.4))
+              inTransit = Math.round(requiredQty * (0.05 + Math.random() * 0.15))
+            } else if (shortageRoll < 0.35) {
+              // Partial shortage: stock 50-90%
+              currentStock = Math.round(requiredQty * (0.3 + Math.random() * 0.5))
+              inTransit = Math.round(requiredQty * (0.05 + Math.random() * 0.2))
+            } else {
+              // Adequate
+              currentStock = Math.round(requiredQty * (0.6 + Math.random() * 0.8))
+              inTransit = Math.round(requiredQty * (0.1 + Math.random() * 0.4))
+            }
+            const totalAvail = currentStock + inTransit
+            const shortageQty = Math.max(0, requiredQty - totalAvail)
+            let kitStatus = '已齐套'
+            if (totalAvail < requiredQty * 0.5) kitStatus = '未齐套'
+            else if (totalAvail < requiredQty) kitStatus = '部分齐套'
+
+            insertMaterial.run(matId, pkgId, mt.code, mt.name, mt.spec, mt.unit, requiredQty, currentStock, inTransit, shortageQty, mt.supplier, mt.lead, kitStatus)
+
+            // Generate daily balance from today to planned production date
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+            const endDate = new Date(Math.max(plannedProd.getTime(), today.getTime() + 15 * 86400000))
+            let cumulativeBalance = currentStock
+            for (let d = new Date(today); d <= endDate; d.setDate(d.getDate() + 1)) {
+              balSeq++
+              const daySupply = Math.random() < 0.15 ? Math.round(requiredQty * (0.05 + Math.random() * 0.15)) : 0
+              const dayDemand = Math.random() < 0.2 ? Math.round(requiredQty * (0.03 + Math.random() * 0.12)) : 0
+              cumulativeBalance = cumulativeBalance + daySupply - dayDemand
+              const dayBalance = daySupply - dayDemand
+              let note = ''
+              if (daySupply > 0) note = `到货 ${daySupply}${mt.unit}`
+              if (dayDemand > 0) note = note ? `${note}；消耗 ${dayDemand}${mt.unit}` : `消耗 ${dayDemand}${mt.unit}`
+              insertBalance.run(`BAL-${String(balSeq).padStart(6, '0')}`, matId, fmtISO(d), daySupply, dayDemand, dayBalance, cumulativeBalance, note)
+            }
+          }
+        }
+      }
+    }
+  })
+
+  transaction()
+  console.log(`[DB] Seeded biz data: ${contracts.length} contracts, ${matSeq} materials, ${balSeq} daily balances`)
 }
 
 function initSchema(db: Database.Database) {
@@ -211,6 +384,67 @@ function initSchema(db: Database.Database) {
       template_id TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
+
+    CREATE TABLE IF NOT EXISTS biz_contracts (
+      id TEXT PRIMARY KEY,
+      contract_no TEXT NOT NULL,
+      customer TEXT NOT NULL,
+      sign_date TEXT DEFAULT '',
+      status TEXT DEFAULT '执行中',
+      amount REAL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS biz_devices (
+      id TEXT PRIMARY KEY,
+      contract_id TEXT NOT NULL REFERENCES biz_contracts(id) ON DELETE CASCADE,
+      device_name TEXT NOT NULL,
+      device_code TEXT DEFAULT '',
+      quantity INTEGER DEFAULT 1,
+      planned_start TEXT DEFAULT '',
+      planned_finish TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS biz_packages (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL REFERENCES biz_devices(id) ON DELETE CASCADE,
+      package_name TEXT NOT NULL,
+      package_code TEXT DEFAULT '',
+      planned_production TEXT DEFAULT '',
+      quantity INTEGER DEFAULT 1,
+      status TEXT DEFAULT '待生产',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS biz_materials (
+      id TEXT PRIMARY KEY,
+      package_id TEXT NOT NULL REFERENCES biz_packages(id) ON DELETE CASCADE,
+      material_code TEXT NOT NULL,
+      material_name TEXT NOT NULL,
+      spec TEXT DEFAULT '',
+      unit TEXT DEFAULT '个',
+      required_qty REAL DEFAULT 0,
+      current_stock REAL DEFAULT 0,
+      in_transit REAL DEFAULT 0,
+      shortage_qty REAL DEFAULT 0,
+      supplier TEXT DEFAULT '',
+      lead_time_days INTEGER DEFAULT 0,
+      kit_status TEXT DEFAULT '待检查',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS biz_material_daily_balance (
+      id TEXT PRIMARY KEY,
+      material_id TEXT NOT NULL REFERENCES biz_materials(id) ON DELETE CASCADE,
+      date TEXT NOT NULL,
+      supply_qty REAL DEFAULT 0,
+      demand_qty REAL DEFAULT 0,
+      balance REAL DEFAULT 0,
+      cumulative_balance REAL DEFAULT 0,
+      note TEXT DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_balance_mat_date ON biz_material_daily_balance(material_id, date);
   `)
 
   // Migration: add supervisor column if missing
@@ -317,8 +551,15 @@ export function getAnalysisFull(taskId: string) {
 
   const orders = d.prepare('SELECT * FROM analysis_orders WHERE analysis_task_id = ?').all(taskId) as any[]
 
+  // Parse a2ui_data if present
+  let a2uiData: unknown[] | null = null
+  if (task.a2ui_data) {
+    try { a2uiData = JSON.parse(task.a2ui_data) } catch { a2uiData = null }
+  }
+
   const result: any = {
     ...task,
+    a2uiData,
     orders: orders.map((order: any) => {
       const categories = d.prepare(
         'SELECT * FROM analysis_problem_categories WHERE order_id = ? ORDER BY sort_order'
@@ -517,6 +758,17 @@ export function saveAnalysisResult(taskId: string, parsed: {
 
   transaction()
   return { success: true }
+}
+
+export function saveA2uiData(taskId: string, a2uiMessages: unknown[]): boolean {
+  const d = getDb()
+  try {
+    d.prepare('UPDATE analysis_tasks SET a2ui_data = ? WHERE id = ?').run(JSON.stringify(a2uiMessages), taskId)
+    return true
+  } catch (err) {
+    console.error('[DB] saveA2uiData error:', err)
+    return false
+  }
 }
 
 export function updateTaskStatus(taskId: string, status: string): boolean {

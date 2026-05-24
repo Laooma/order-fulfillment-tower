@@ -5,6 +5,7 @@ export interface ChatPageConfig {
   page: string
   visible?: boolean
   orders?: string[]
+  cabinetPackages?: string[]
   tabs?: { key: string; label: string; hidden?: boolean }[]
   activeTab?: string
   lockAgent?: boolean
@@ -13,6 +14,7 @@ export interface ChatPageConfig {
   onAnalysisComplete?: (analysisId: string) => void
   onA2uiSurface?: (data: { title: string; messages: unknown[] }) => void
   onClearOrders?: () => void
+  onClearCabinets?: () => void
 }
 
 interface ChatStore {
@@ -27,8 +29,8 @@ interface ChatStore {
   detailSlot: React.ReactNode
   setDetailSlot: (node: React.ReactNode) => void
 
-  sendMessage: ((message: string, opts?: { taskId?: string; orders?: string[] }) => void) | null
-  setSendMessage: (fn: ((message: string, opts?: { taskId?: string; orders?: string[] }) => void) | null) => void
+  sendMessage: ((message: string, opts?: { taskId?: string; orders?: string[]; cabinetPackages?: string[] }) => void) | null
+  setSendMessage: (fn: ((message: string, opts?: { taskId?: string; orders?: string[]; cabinetPackages?: string[] }) => void) | null) => void
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
