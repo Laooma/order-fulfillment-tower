@@ -37,10 +37,10 @@
     {
       "name": "volcengine",
       "apiKey": "70ecae06-63bd-4ea2-bfba-a273b22e480a",
-      "apiUrl": "https://ark.cn-beijing.volces.com/api/coding",
+      "apiUrl": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
       "models": [
         {
-          "id": "doubao-seed-2.0-pro",
+          "id": "doubao-seed-2-0-pro-260215",
           "name": "doubao-seed-2.0-pro",
           "tag": "doubao-seed-2.0-pro",
           "deepThinking": false,

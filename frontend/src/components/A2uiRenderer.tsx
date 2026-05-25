@@ -244,6 +244,9 @@ const SUPPORTED_COMPONENTS = new Set([
   'Row', 'Column', 'Card', 'Divider', 'Button',
   'List', 'Modal', 'CheckBox', 'TextField', 'Slider',
   'Tag', 'ProgressBar', 'Table', 'Chart',
+  // Lowercase aliases — LLM often outputs these
+  'text', 'row', 'column', 'card', 'divider', 'button',
+  'list', 'tag', 'table', 'chart', 'image', 'icon',
 ])
 
 // Recursive component renderer

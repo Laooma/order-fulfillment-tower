@@ -62,7 +62,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const [messages, setMessages] = useState<Message[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [models, setModels] = useState<ModelInfo[]>([])
-  const [selectedModelId, setSelectedModelId] = useState('')
+  const [selectedModelId, setSelectedModelId] = useState(() => localStorage.getItem('chat-preferred-model-id') || '')
   const [showModelDropdown, setShowModelDropdown] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [pendingAnalysis, setPendingAnalysis] = useState<{ id: string; redirect: string } | null>(null)
@@ -102,6 +102,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
 
   // Store selectors
   const pageConfig = useChatStore((s) => s.pageConfig)
+  const contextTaskId = pageConfig?.taskId
   const footerSlot = useChatStore((s) => s.footerSlot)
   const detailSlot = useChatStore((s) => s.detailSlot)
   const setSendMessage = useChatStore((s) => s.setSendMessage)
@@ -169,18 +170,33 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         const filtered = skillsRes.skills.filter((s) => hasSkill(s.id))
         setSkills(filtered)
         if (filtered.length > 0 && !activeAgent) {
-          setActiveAgent(filtered[0])
+          const cachedSkillId = localStorage.getItem('chat-preferred-skill-id')
+          const cachedSkill = cachedSkillId ? filtered.find((s) => s.id === cachedSkillId) : null
+          setActiveAgent(cachedSkill || filtered[0])
         }
         setModels(modelsRes.models)
-        if (modelsRes.defaultModel && !selectedModelId) {
-          setSelectedModelId(modelsRes.defaultModel)
-        } else if (modelsRes.models.length > 0 && !selectedModelId) {
-          setSelectedModelId(modelsRes.models[0].id)
+        if (!selectedModelId && modelsRes.models.length > 0) {
+          // selectedModelId already initialized from localStorage; only fall back to default
+          const defaultId = modelsRes.defaultModel || modelsRes.models[0]?.id
+          if (defaultId) setSelectedModelId(defaultId)
         }
       })
       .catch((err) => console.error('Failed to load skills/models:', err))
       .finally(() => setSkillsLoading(false))
   }, [])
+
+  // Persist user preferences to localStorage
+  useEffect(() => {
+    if (selectedModelId) {
+      localStorage.setItem('chat-preferred-model-id', selectedModelId)
+    }
+  }, [selectedModelId])
+
+  useEffect(() => {
+    if (activeAgent?.id) {
+      localStorage.setItem('chat-preferred-skill-id', activeAgent.id)
+    }
+  }, [activeAgent?.id])
 
   // Handle WebSocket messages
   useEffect(() => {
@@ -355,6 +371,10 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         thinkingContentRef.current = ''
         setErrorMessage(msg.errorMessage || msg.content || '请求失败')
         if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null }
+        // Notify analysis page of error so it can reset generatingTodos state
+        if (msg.taskId && onAnalysisComplete) {
+          onAnalysisComplete(msg.taskId)
+        }
       }
       if (msg.type === 'stopped') {
         setIsSending(false)
@@ -526,12 +546,12 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       autoAssign: autoAssign || undefined,
       model: selectedModelId,
       message: fullMessage,
-      taskId: opts?.taskId,
+      taskId: opts?.taskId || contextTaskId,
       orders: orderIds,
       cabinetPackages: cabinetPackageIds,
       images,
     })
-  }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, onClearCabinets, sessionId, quotedMessage, attachedImages])
+  }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, onClearCabinets, sessionId, quotedMessage, attachedImages, contextTaskId])
 
   // Register sendMessage in the store so pages can trigger sends programmatically
   useEffect(() => {

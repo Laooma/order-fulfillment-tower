@@ -3,6 +3,7 @@ import { create } from 'zustand'
 export interface ChatPageConfig {
   sessionId?: string
   page: string
+  taskId?: string
   visible?: boolean
   orders?: string[]
   cabinetPackages?: string[]

@@ -63,7 +63,9 @@ wss.on('connection', (ws) => {
       const msg: AgentMessage = JSON.parse(raw.toString())
       console.log('[WS] Received:', msg.type, msg.sessionId)
 
-      if (msg.type === 'chat' && msg.sessionId && (msg.skillId || msg.autoAssign)) {
+      // Allow todo generation messages without skillId/autoAssign — these are system-triggered
+      const isTodoGen = msg.taskId && msg.message?.startsWith('请为以下合同生成待办清单')
+      if (msg.type === 'chat' && msg.sessionId && (msg.skillId || msg.autoAssign || isTodoGen)) {
         await handleAgentMessage(ws, msg, mcpPool)
       } else if (msg.type === 'chat') {
         ws.send(JSON.stringify({ type: 'error', content: '请选择一个智能体或开启自动分配', sessionId: msg.sessionId }))

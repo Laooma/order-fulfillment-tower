@@ -253,6 +253,10 @@ const SHOW_ANALYSIS_RESULT_TOOL = {
           description: 'A2UI v0.9 格式的 UI 消息数组。包含 createSurface（创建渲染表面）、updateComponents（定义组件树）和 updateDataModel（填充数据）三种消息类型。',
           items: { type: 'object' },
         },
+        taskId: {
+          type: 'string',
+          description: '关联的分析任务 ID（由 create_analysis_task 返回）。传入后 A2UI 数据会持久化到该任务，用户下次打开分析任务页面时仍可查看。强烈建议传入此参数。',
+        },
       },
       required: ['title', 'a2uiMessages'],
     },
@@ -278,7 +282,18 @@ function normalizeA2uiMessages(raw: unknown[]): unknown[] {
     stat: 'Card', icon: 'Icon', image: 'Image',
     progressbar: 'ProgressBar', progress: 'ProgressBar',
     list: 'Column', grid: 'Row',
+    // LLM hallucination fallbacks — normalize common model-invented types
+    header: 'Text', heading: 'Text', title: 'Text',
+    row: 'Row', section: 'Column', container: 'Column',
+    panel: 'Card', cell: 'Text', label: 'Text',
+    spacer: 'Divider', separator: 'Divider',
   }
+
+  const SUPPORTED_TYPES = new Set([
+    'Text', 'Row', 'Column', 'Card', 'Table', 'Chart',
+    'Tag', 'ProgressBar', 'Divider', 'Button', 'Icon', 'Image',
+    'List', 'CheckBox', 'TextField', 'Slider',
+  ])
 
   // Props that should stay as-is (not treated as style)
   const KNOWN_PROPS = new Set([
@@ -326,6 +341,13 @@ function normalizeA2uiMessages(raw: unknown[]): unknown[] {
       const lower = src.type.toLowerCase()
       converted.component = COMPONENT_MAP[lower] || src.type
       delete src.type
+    }
+    // Fallback: unsupported component types → Text
+    if (converted.component && typeof converted.component === 'string' && !SUPPORTED_TYPES.has(converted.component)) {
+      if (converted.text === undefined && (converted as any).content !== undefined) {
+        converted.text = (converted as any).content
+      }
+      converted.component = 'Text'
     }
 
     // Copy known A2UI props directly (preserving original values)
@@ -543,14 +565,14 @@ const CREATE_ANALYSIS_TASK_TOOL = {
   type: 'function' as const,
   function: {
     name: 'create_analysis_task',
-    description: '创建分析任务记录。在完成分析后调用此工具，将分析结果持久化保存。系统会自动生成任务ID并导航到分析任务页面。如需生成A2UI可视化报表，必须先调用此工具创建任务，再调用 show_analysis_result 并传入返回的 taskId。',
+    description: '创建分析任务记录，将分析结果持久化保存到数据库。调用后会生成任务ID并跳转到分析任务页面，用户可在「看板分析」tab中查看结构化数据。如需生成A2UI可视化图表，应先用此工具创建任务获取taskId，再调用 show_analysis_result。',
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: '分析任务标题，格式如"合同SC-2025-001齐套分析"或"HT202598001等2个订单履约分析"' },
-        result: { type: 'object', description: '结构化分析结果JSON对象（可选）。对于履约分析：包含 orders 数组；对于齐套分析：可省略此参数（数据由 show_analysis_result 的 A2UI 报表呈现）' },
+        title: { type: 'string', description: '分析任务标题，如"HT202598001等2个订单履约分析"' },
+        result: { type: 'object', description: '分析结果JSON，必须包含 orders 数组。每个order需包含：contractNumber(订单编号)、customer(客户)、amount(金额万元)、shipmentRatio(发货率数字)、status(状态)、statusClass(blue/green/orange)、sales(销售员)、region(区域)、orderDate(下单日期)、problemCategories(问题分类数组)、deliveryTables(交付表格数组)。详见系统提示中的JSON格式。' },
       },
-      required: ['title'],
+      required: ['title', 'result'],
     },
   },
 }
@@ -562,17 +584,60 @@ async function handleCreateAnalysisTask(
   skillName: string,
   orders: string[],
   sessionMessages?: Array<{ role: string; content: string }>,
+  contextTaskId?: string,
 ): Promise<{ text: string; taskId?: string }> {
   const title = String(args.title || `${skillName} — 履约分析`)
   const result = args.result as Record<string, unknown> | undefined
   const a2uiMessages = args.a2uiMessages
 
+  // Update mode: user is already on an analysis page, update existing task
+  if (contextTaskId) {
+    let structuredJson: string | null = null
+    if (sessionMessages) {
+      const allAssistantContent = sessionMessages
+        .filter((m) => m.role === 'assistant')
+        .map((m) => m.content)
+        .join('\n')
+      structuredJson = extractStructuredJson(allAssistantContent)
+    }
+
+    const jsonToSave = structuredJson || (result ? JSON.stringify(result) : null)
+    if (jsonToSave) {
+      await saveStructuredResult(contextTaskId, jsonToSave)
+    }
+
+    if (a2uiMessages && Array.isArray(a2uiMessages) && a2uiMessages.length > 0) {
+      const normalized = normalizeA2uiMessages(a2uiMessages)
+      fetch(`${BACKEND_API}/analysis/${contextTaskId}/result`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ a2uiMessages: normalized }),
+      }).catch(err => console.error('[AgentLoop] Failed to save A2UI data:', err))
+    }
+
+    send(ws, {
+      type: 'analysis_updated',
+      sessionId,
+      analysisId: contextTaskId,
+      analysisTitle: title,
+    })
+
+    return {
+      text: `分析结果已更新到当前任务（ID: ${contextTaskId}）。`,
+      taskId: contextTaskId,
+    }
+  }
+
+  // Create mode: no existing task context, create a new one
   const task = await createAnalysisTask(title, skillName, orders)
   if (!task) {
     return { text: 'Error: 创建分析任务失败，请稍后重试' }
   }
 
-  // Primary: extract structured JSON from all assistant messages (same as old flow quality)
+  // Build base order data from API — guarantees orders are always saved
+  let baseResult = orders.length > 0 ? await buildFallbackFromApi(orders) : null
+
+  // Try to extract structured JSON from assistant messages for enrichment (problemCategories, etc.)
   let structuredJson: string | null = null
   if (sessionMessages) {
     const allAssistantContent = sessionMessages
@@ -582,11 +647,36 @@ async function handleCreateAnalysisTask(
     structuredJson = extractStructuredJson(allAssistantContent)
   }
 
-  // Use the extracted JSON from messages (primary), fall back to tool result parameter
-  const jsonToSave = structuredJson || (result ? JSON.stringify(result) : null)
+  // Prefer result parameter with orders, then structured JSON from messages, then API base
+  const hasResultOrders = result && hasOrdersInResult(result)
+  let jsonToSave: string | null = null
+
+  if (hasResultOrders) {
+    // LLM passed a valid orders object — use it directly
+    jsonToSave = JSON.stringify(result)
+  } else if (structuredJson) {
+    // Enrich base order data with LLM-provided problem categories
+    try {
+      const parsed = JSON.parse(structuredJson)
+      if (parsed.orders && Array.isArray(parsed.orders)) {
+        jsonToSave = structuredJson
+      } else if (baseResult) {
+        // Merge LLM analysis (categories, todos, etc.) into base orders
+        jsonToSave = JSON.stringify({ ...baseResult, ...parsed })
+      }
+    } catch {
+      // Can't parse structured JSON, fall through to base
+    }
+  }
+
+  // Use base result from API as final fallback
+  if (!jsonToSave && baseResult) {
+    jsonToSave = JSON.stringify(baseResult)
+  }
+
   if (jsonToSave) {
     const saved = await saveStructuredResult(task.id, jsonToSave)
-    if (!saved && result) {
+    if (!saved) {
       console.error('[AgentLoop] Failed to save structured result for', task.id)
     }
   } else {
@@ -612,7 +702,7 @@ async function handleCreateAnalysisTask(
   })
 
   return {
-    text: `分析任务已创建（ID: ${task.id}），用户可在历史分析页面查看。待办清单需由用户在界面点击按钮触发，请勿自动调用 generate_todos。`,
+    text: `分析任务已创建（ID: ${task.id}），用户可在历史分析页面查看。如果用户需要生成待办清单，请等待用户在界面点击「生成待办清单」按钮（会发送特定格式消息），收到该消息后再调用 generate_todos。`,
     taskId: task.id,
   }
 }
@@ -1100,11 +1190,15 @@ export async function handleAgentMessage(
 
   try {
 
-  // Route: frontend button sends taskId to trigger todo generation
-  if (taskId) {
+  // Route: frontend button sends taskId with todo generation request message
+  if (taskId && message.startsWith('请为以下合同生成待办清单')) {
     await generateTodosForTask(ws, sessionId, taskId, message, orders || [], mcp, abortController.signal)
     return
   }
+
+  // When user is on an existing analysis page, carry taskId through as context
+  // so the agent updates the existing task instead of creating a new one.
+  const contextTaskId = taskId || undefined
 
   // Skill resolution
   let skill: Skill | null = null
@@ -1248,9 +1342,13 @@ export async function handleAgentMessage(
         tools: tools.length > 0 ? tools : undefined,
       }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl, signal: abortController.signal })) {
 
-        // Accumulate text content; markers will be split and emitted after streaming
+        // Accumulate text content; stream to frontend incrementally, stripping TASK_COMPLETE markers
         if (chunk.content) {
           streamContent += chunk.content
+          const cleanChunk = chunk.content.replace(/[\[<]TASK_COMPLETE:[^\s\[\]<>]+[\]>]?/g, '')
+          if (cleanChunk) {
+            send(ws, { type: 'chunk', content: cleanChunk, sessionId, taskId: getActiveTaskId(sessionId) })
+          }
         }
 
         // Track usage
@@ -1280,7 +1378,7 @@ export async function handleAgentMessage(
         }
       }
 
-      // Emit text content, splitting at TASK_COMPLETE markers
+      // Emit task_boundary events for TASK_COMPLETE markers (content already streamed incrementally)
       const taskCompleteSplitRe = /[\[<]TASK_COMPLETE:([^\s\[\]<>]+)[\]>]?/g
 
       // Find all marker positions in streamContent
@@ -1295,26 +1393,11 @@ export async function handleAgentMessage(
 
       if (markerPositions.length > 0) {
         const todos = todoStores.get(sessionId) || []
-        let lastEnd = 0
         for (const mp of markerPositions) {
-          const segment = streamContent.slice(lastEnd, mp.index).trim()
-          if (segment) {
-            send(ws, { type: 'chunk', content: segment, sessionId, taskId: getActiveTaskId(sessionId) })
-          }
-          // Flush any pending boundaries from handleTodoWrite, then send a boundary for this marker
           flushPendingBoundaries(ws, sessionId)
           const task = todos.find(t => t.id === mp.taskId)
           send(ws, { type: 'task_boundary', sessionId, taskId: mp.taskId, taskContent: task?.content || '', verified: true })
-          lastEnd = mp.endIndex
         }
-        // Emit remaining text after the last marker
-        const remaining = streamContent.slice(lastEnd).trim()
-        if (remaining) {
-          send(ws, { type: 'chunk', content: remaining, sessionId, taskId: getActiveTaskId(sessionId) })
-        }
-      } else if (streamContent.trim()) {
-        // No markers — send as single chunk
-        send(ws, { type: 'chunk', content: streamContent.trim(), sessionId, taskId: getActiveTaskId(sessionId) })
       }
 
       // Track tokens and check compaction after each LLM call
@@ -1351,6 +1434,8 @@ export async function handleAgentMessage(
         // Handle built-in todo_write tool
         if (normalizedName === 'todowrite') {
             const resultText = handleTodoWrite(toolArgs, sessionId, ws)
+            console.log('[AgentLoop] todo_write CALLED with args:', JSON.stringify(toolArgs).slice(0, 300))
+            console.log('[AgentLoop] todo_write result:', resultText)
             pushMessage(sessionKey, session, {
               role: 'tool',
               content: resultText,
@@ -1418,7 +1503,7 @@ export async function handleAgentMessage(
 
           // Handle built-in create_analysis_task tool
           if (normalizedName === 'createanalysistask') {
-            const result = await handleCreateAnalysisTask(toolArgs, ws, sessionId, skill.name, orders || [], session.messages)
+            const result = await handleCreateAnalysisTask(toolArgs, ws, sessionId, skill.name, orders || [], session.messages, contextTaskId)
             if (result.taskId) {
               analysisId = result.taskId
             }
@@ -1570,31 +1655,39 @@ export async function handleAgentMessage(
       break
     }
 
-    // Post-loop: extract structured JSON from all assistant messages and auto-create analysis task
-    if (!analysisId) {
+    // Post-loop: extract structured JSON from final assistant response and persist to analysis task.
+    // Skip only when user is already viewing an existing analysis page (contextTaskId).
+    if (!contextTaskId) {
       const allAssistantContent = session.messages
         .filter((m) => m.role === 'assistant')
         .map((m) => m.content)
         .join('\n')
       const structuredJson = extractStructuredJson(allAssistantContent)
       if (structuredJson) {
-        const task = await createAnalysisTask(
-          `${skill.name} — 履约分析`,
-          skill.name,
-          orders || [],
-        )
-        if (task) {
-          analysisId = task.id
-          await saveStructuredResult(task.id, structuredJson)
-          send(ws, {
-            type: 'analysis_created',
-            sessionId,
-            analysisId: task.id,
-            analysisTitle: `${skill.name} — 履约分析`,
-            redirect: `/analysis/${task.id}`,
-          })
+        if (analysisId) {
+          // Task already created during the loop (LLM called create_analysis_task) —
+          // save the final structured JSON which may contain the complete orders block.
+          await saveStructuredResult(analysisId, structuredJson)
+        } else {
+          // No task created yet — auto-create one from the extracted JSON.
+          const task = await createAnalysisTask(
+            `${skill.name} — 履约分析`,
+            skill.name,
+            orders || [],
+          )
+          if (task) {
+            analysisId = task.id
+            await saveStructuredResult(task.id, structuredJson)
+            send(ws, {
+              type: 'analysis_created',
+              sessionId,
+              analysisId: task.id,
+              analysisTitle: `${skill.name} — 履约分析`,
+              redirect: `/analysis/${task.id}`,
+            })
+          }
         }
-      } else {
+      } else if (!analysisId) {
         console.warn('[AgentLoop] No structured JSON found in assistant messages for session', sessionId)
       }
     }
@@ -1738,11 +1831,11 @@ async function generateTodosForTask(
   const modelId = getDefaultModel()
   const provider = getProviderForModel(modelId)
   if (!provider) {
-    send(ws, { type: 'error', content: `Model not found: ${modelId}`, sessionId })
+    send(ws, { type: 'error', content: `Model not found: ${modelId}`, sessionId, taskId })
     return
   }
 
-  send(ws, { type: 'status', sessionId, status: 'thinking', skillName: '待办生成', modelId })
+  send(ws, { type: 'status', sessionId, status: 'thinking', skillName: '待办生成', modelId, taskId })
 
   const startTime = Date.now()
 
@@ -1770,7 +1863,7 @@ async function generateTodosForTask(
 {
   "todos": [
     {
-      "contractNumber": "订单系统编号（使用数据的 id 字段值，不是 contractNumber）",
+      "contractNumber": "订单合同编号（必须使用输入数据中提供的合同编号，如 HT202504001，不要自行拼接或修改）",
       "category": "发货任务",
       "description": "具体任务描述",
       "priority": "high",
@@ -1788,150 +1881,63 @@ async function generateTodosForTask(
   const session = getOrCreateSession(`${sessionId}:todos`, 'todo-generator', systemPrompt)
   const todoSessionKey = `${sessionId}:todos:todo-generator`
 
+  // Build user message with explicit valid order IDs so LLM uses correct contractNumber
+  let userContent = userMessage
   if (orders.length > 0) {
+    userContent += `\n\n**重要：contractNumber 必须使用以下合同编号（原样使用，不要修改或拼接）：${orders.join('、')}**`
     const orderData = await fetchOrderData(orders)
     if (orderData) {
-      pushMessage(todoSessionKey, session, { role: 'user', content: `${userMessage}\n\n关联订单数据：\n\`\`\`json\n${orderData}\n\`\`\`` })
-    } else {
-      pushMessage(todoSessionKey, session, { role: 'user', content: userMessage })
+      userContent += `\n\n关联订单数据：\n\`\`\`json\n${orderData}\n\`\`\``
     }
-  } else {
-    pushMessage(todoSessionKey, session, { role: 'user', content: userMessage })
   }
+  pushMessage(todoSessionKey, session, { role: 'user', content: userContent })
 
   try {
-    const BUILTIN_TODO_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'generate_todos'])
-    const BUILTIN_TODO_NORMALIZED = new Set(Array.from(BUILTIN_TODO_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
-    const TODO_MCP_TOOLS = mcp.getTools().map((t) => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description || '',
-        parameters: t.inputSchema || { type: 'object', properties: {} },
-      },
-    }))
-    const mcpTools = TODO_MCP_TOOLS.filter((t) => !BUILTIN_TODO_NORMALIZED.has(t.function.name.toLowerCase().replace(/_/g, '')))
-    const tools = [TODO_WRITE_TOOL, SAVE_SKILL_TOOL, SAVE_HOOK_TOOL, SEND_NOTIFICATION_TOOL, LIST_NOTIFICATION_CHANNELS_TOOL, ...mcpTools].filter((t) => getEnabledTools(mcp).some((et) => et.name === t.function.name) || BUILTIN_TODO_NORMALIZED.has(t.function.name.toLowerCase().replace(/_/g, '')))
+    // Single-pass LLM call — no tools, LLM outputs JSON directly.
+    // Avoiding tools prevents tool-calling loops and reasoning_content errors with thinking models.
+    let streamContent = ''
 
-    let iteration = 0
-    let finalContent = ''
+    for await (const chunk of streamChat({
+      model: modelId,
+      messages: session.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      temperature: 0.3,
+    }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl, signal })) {
 
-    while (iteration < MAX_ITERATIONS) {
-      iteration++
-
-      let streamContent = ''
-      const accumulatedToolCalls: Map<number, { id: string; type: string; function: { name: string; arguments: string } }> = new Map()
-
-      for await (const chunk of streamChat({
-        model: modelId,
-        messages: session.messages.map((m) => {
-          if (m.role === 'tool') {
-            return { role: 'tool' as const, content: m.content, tool_call_id: m.toolCallId || '' }
-          }
-          const base: any = { role: m.role, content: m.content }
-          if (m.role === 'assistant' && m.toolCalls) {
-            base.tool_calls = m.toolCalls
-          }
-          return base
-        }),
-        temperature: 0.7,
-        tools: tools.length > 0 ? tools : undefined,
-      }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl, signal })) {
-
-        if (chunk.content) {
-          streamContent += chunk.content
-          send(ws, { type: 'chunk', content: chunk.content, sessionId, taskId: getActiveTaskId(sessionId) })
-        }
-
-        if (chunk.toolCalls) {
-          for (const tc of chunk.toolCalls) {
-            if (tc.id) {
-              const idx = accumulatedToolCalls.size
-              accumulatedToolCalls.set(idx, {
-                id: tc.id,
-                type: tc.type || 'function',
-                function: { name: tc.function?.name || '', arguments: tc.function?.arguments || '' },
-              })
-            } else if (tc.function?.arguments && accumulatedToolCalls.size > 0) {
-              const lastKey = Array.from(accumulatedToolCalls.keys()).pop()!
-              const last = accumulatedToolCalls.get(lastKey)!
-              last.function.arguments += tc.function.arguments
-            }
-          }
-        }
+      if (chunk.content) {
+        streamContent += chunk.content
+        send(ws, { type: 'chunk', content: chunk.content, sessionId, taskId })
       }
-
-      const toolCallsArr = Array.from(accumulatedToolCalls.values())
-      if (toolCallsArr.length > 0) {
-        pushMessage(todoSessionKey, session, { role: 'assistant', content: streamContent, toolCalls: toolCallsArr })
-        for (const toolCall of toolCallsArr) {
-          let toolArgs: Record<string, unknown> = {}
-          try { toolArgs = JSON.parse(toolCall.function.arguments || '{}') } catch { /* keep empty */ }
-          const toolName = toolCall.function.name
-          const normalizedName = toolName.toLowerCase().replace(/_/g, '')
-
-          if (normalizedName === 'todowrite') {
-            const resultText = handleTodoWrite(toolArgs, sessionId, ws)
-            pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
-            continue
-          }
-
-          if (normalizedName === 'saveskill') {
-            const resultText = handleSaveSkill(toolArgs)
-            pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
-            continue
-          }
-
-          if (normalizedName === 'savehook') {
-            const resultText = handleSaveHook(toolArgs)
-            pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
-            continue
-          }
-
-          if (normalizedName === 'sendnotification') {
-            const resultText = await handleSendNotification(toolArgs)
-            pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
-            continue
-          }
-
-          if (normalizedName === 'listnotificationchannels') {
-            const resultText = await handleListNotificationChannels()
-            pushMessage(todoSessionKey, session, { role: 'tool', content: resultText, toolCallId: toolCall.id })
-            continue
-          }
-
-          try {
-            const handle = await mcp.acquire({ workDir: session.workDir })
-            let result: unknown
-            try {
-              result = await handle.callTool(toolName, toolArgs)
-            } finally {
-              handle.release()
-            }
-            pushMessage(todoSessionKey, session, { role: 'tool', content: typeof result === 'string' ? result : JSON.stringify(result), toolCallId: toolCall.id })
-          } catch (err: any) {
-            pushMessage(todoSessionKey, session, { role: 'tool', content: `Error: ${err.message}`, toolCallId: toolCall.id })
-          }
-        }
-        continue
-      }
-
-      finalContent = streamContent || '已生成待办清单。'
-      pushMessage(todoSessionKey, session, { role: 'assistant', content: finalContent })
-      break
     }
 
-    // Extract todos JSON and save — search all assistant messages, not just finalContent
-    const allAssistantContent = session.messages
-      .filter((m) => m.role === 'assistant' && m.content)
-      .map((m) => m.content)
-      .join('\n')
-    const todosJson = extractStructuredJson(allAssistantContent || finalContent)
+    const finalContent = streamContent || '已生成待办清单。'
+    pushMessage(todoSessionKey, session, { role: 'assistant', content: finalContent })
+
+    // Extract todos JSON from response
+    const todosJson = extractStructuredJson(finalContent)
     if (todosJson) {
       try {
         const parsed = JSON.parse(todosJson)
         if (parsed.todos && Array.isArray(parsed.todos)) {
-          // Save todos to backend
+          // Fix LLM-generated contractNumbers that don't match actual order IDs
+          if (orders.length > 0) {
+            parsed.todos = parsed.todos.map((todo: any) => {
+              const cn = String(todo.contractNumber || '')
+              // Already valid — keep as-is
+              if (orders.includes(cn)) return todo
+              // Try to find a matching order ID that is a substring of the generated contractNumber
+              const match = orders.find((oid) => cn.includes(oid))
+              if (match) return { ...todo, contractNumber: match }
+              // Try the reverse: find the order ID in description/task text
+              const descMatch = orders.find((oid) =>
+                (todo.description || '').includes(oid) || (cn && oid.includes(cn))
+              )
+              if (descMatch) return { ...todo, contractNumber: descMatch }
+              return todo
+            })
+          }
           await fetch(`${BACKEND_API}/analysis/${taskId}/todos`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1961,7 +1967,7 @@ async function generateTodosForTask(
   } catch (err: any) {
     if (signal?.aborted || err.name === 'AbortError') return
     console.error('[AgentLoop] Generate todos error:', err)
-    send(ws, { type: 'error', content: `待办生成失败: ${err.message}`, sessionId })
+    send(ws, { type: 'error', content: `待办生成失败: ${err.message}`, sessionId, taskId })
   }
 }
 
@@ -2037,8 +2043,8 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `- save_skill: 将新创建的 Skill 保存到文件系统（skillId、name、description、icon、color、prompt 六个必填参数，可选的 references 数组和 scripts 数组用于创建参考文档和脚本文件）\n`
   prompt += `- save_hook: 将新创建的 Hook 保存到文件系统（hookId、name、description、event、script 五个必填参数，enabled 和 matcher 可选）\n`
   prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）、taskId（可选，关联的分析任务ID）\n`
-  prompt += `- create_analysis_task: 创建分析任务记录，将分析结果持久化保存。参数：title（任务标题）、result（结构化分析结果JSON对象）。调用成功后会生成任务ID，用户可点击「查看分析结果」进入任务页面。在需要生成A2UI可视化报表时，必须先调用此工具创建任务，再调用 show_analysis_result 并传入 taskId\n`
-  prompt += `- generate_todos: 【严格限制】仅在用户明确要求"生成待办清单"、"生成待办"、"创建执行任务"时调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办，非用户明确要求不得触发\n\n`
+  prompt += `- create_analysis_task: 完成分析后必须调用，将结构化结果持久化到数据库。参数：title（任务标题）、result（包含 orders 数组的JSON对象，每个order含 contractNumber/customer/amount/shipmentRatio/status/statusClass/sales/region/orderDate/problemCategories/deliveryTables 等字段）。调用后返回 taskId，可用于后续 show_analysis_result。\n`
+  prompt += `- generate_todos: 当用户消息以"请为以下合同生成待办清单"开头时（这是用户点击了界面按钮），必须调用此工具。其他场景仅在用户直接要求"生成待办清单"、"创建执行任务"时才调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办\n\n`
 
   // Add references and scripts info
   if (skill.references.length > 0 || skill.scripts.length > 0) {
@@ -2079,7 +2085,10 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `- {"id":"prog1","type":"ProgressBar","value":65,"max":100,"text":"65%"}\n`
   prompt += `- {"id":"div1","type":"Divider"}\n\n`
   prompt += `**常用颜色：** 绿色:#10b981 红色:#ef4444 橙色:#f59e0b 蓝色:#3b82f6 灰色:#6b7280\n\n`
-  prompt += `**完整示例（齐套分析看板）：**\n`
+  prompt += `**重要限制：** 只能使用以上列出的组件类型（Text/Row/Column/Card/Table/Chart/Tag/ProgressBar/Divider）。\n`
+  prompt += `禁止使用 header、heading、title、row、section、container、panel、cell、label、spacer 等未列出的类型。\n`
+  prompt += `如需标题用 Text + size 属性（如 {"id":"t1","type":"Text","text":"标题","size":"xl"}），如需分组用 Column 或 Card，表格行数据直接放入 Table 的 rows 数组。\n\n`
+  prompt += `**通用示例（根据实际分析场景替换卡片标题、表格列名、图表数据）：**\n`
   prompt += `\`\`\`json\n`
   prompt += `[\n`
   prompt += `  {"type":"createSurface","surfaceId":"main"},\n`
@@ -2088,36 +2097,33 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `    {"id":"cards","type":"Row","children":["c1","c2","c3"],"gap":12},\n`
   prompt += `    {"id":"c1","type":"Card","children":[\n`
   prompt += `      {"id":"c1t","type":"Column","children":["c1l","c1v"],"gap":4},\n`
-  prompt += `      {"id":"c1l","type":"Text","text":"齐套率","size":"sm"},\n`
-  prompt += `      {"id":"c1v","type":"Text","text":"50%","size":"3xl"}\n`
+  prompt += `      {"id":"c1l","type":"Text","text":"指标名称（如：发货率）","size":"sm"},\n`
+  prompt += `      {"id":"c1v","type":"Text","text":"85%","size":"3xl"}\n`
   prompt += `    ]},\n`
   prompt += `    {"id":"c2","type":"Card","children":[...]},\n`
   prompt += `    {"id":"c3","type":"Card","children":[...]},\n`
-  prompt += `    {"id":"table1","type":"Table","columns":[{"key":"date","label":"日期"},{"key":"supply","label":"供给"}],"rows":{"path":"/tableData"}},\n`
-  prompt += `    {"id":"chart1","type":"Chart","chartType":"bar","xKey":"date","yKeys":["supply","demand"],"colors":["#3b82f6","#ef4444"],"labels":["供给","需求"],"rows":{"path":"/chartData"}}\n`
+  prompt += `    {"id":"table1","type":"Table","columns":[{"key":"col1","label":"列名1"},{"key":"col2","label":"列名2"}],"rows":{"path":"/tableData"}},\n`
+  prompt += `    {"id":"chart1","type":"Chart","chartType":"bar","xKey":"category","yKeys":["val1","val2"],"colors":["#3b82f6","#ef4444"],"labels":["系列1","系列2"],"rows":{"path":"/chartData"}}\n`
   prompt += `  ]},\n`
   prompt += `  {"type":"updateDataModel","surfaceId":"main","value":{"tableData":[...],"chartData":[...]}}\n`
   prompt += `]\n`
   prompt += `\`\`\`\n`
-  prompt += `注意：Card 的 children 数组第一个子节点作为 card 内容；数据绑定用 {"path":"/key"} 引用 updateDataModel 中的数据。\n\n`
+  prompt += `重要：Card 标题、Table columns、Chart yKeys/labels 必须根据实际分析内容动态生成，不要照搬示例中的占位名。数据绑定用 {"path":"/key"} 引用 updateDataModel 中的数据。\n\n`
 
   // ── Task execution protocol ──
-  prompt += `## 问题探索规范（强制要求）\n`
-  prompt += `当遇到复杂问题或无法直接给出答案时，你**必须**遵循以下流程：\n\n`
-  prompt += `1. **探索阶段**：使用工具调查问题来源、产生原因、影响范围\n`
-  prompt += `   - 查看相关数据文件、日志、配置，收集上下文信息\n`
-  prompt += `   - 分析根因，不要只看表面现象\n`
-  prompt += `   - 在对话中明确输出分析结论：问题是什么、为什么发生、有哪些解决方向\n`
-  prompt += `2. **方案确认阶段**：列出你的分析结论和拟定的执行方案（包括预计要做什么、产出什么）\n`
-  prompt += `   - 明确告诉用户你的计划和预期结果\n`
-  prompt += `   - **等待用户确认后**再进入规划阶段，不要在没有得到用户同意的情况下直接执行\n`
-  prompt += `3. **规划阶段**：用户确认方案后，调用 todo_write 列出执行步骤\n`
-  prompt += `4. **执行阶段**：逐项执行，每完成一项验证一项\n\n`
-
-  prompt += `## 任务执行规范\n`
-  prompt += `规划完成后，严格按以下流程执行每个任务：\n\n`
+  prompt += `## 任务规划与执行规范（强制要求）\n`
+  prompt += `当遇到复杂问题、多步骤任务、或用户明确要求"列出步骤"时，你**必须**遵循以下流程：\n\n`
+  prompt += `**第一步：创建任务列表**\n`
+  prompt += `立即调用 todo_write，列出你要完成的所有步骤。每个步骤作为一个任务，status 设为 "pending"。\n`
+  prompt += `例如：todo_write({ todos: [\n`
+  prompt += `  {id:"1", content:"查询数据", status:"pending"},\n`
+  prompt += `  {id:"2", content:"分析原因", status:"pending"},\n`
+  prompt += `  {id:"3", content:"生成报告", status:"pending"}\n`
+  prompt += `] })\n`
+  prompt += `系统会在界面上显示一个多任务看板，让用户看到你的执行进度。\n\n`
+  prompt += `**第二步：逐项执行**\n`
   prompt += `1. 调用 todo_write 将当前任务标记为 "in_progress"（一次只有一个 in_progress 任务）\n`
-  prompt += `2. 执行该任务需要的工具调用\n`
+  prompt += `2. 执行该任务需要的工具调用（fetch_biz_data、shell 命令等）\n`
   prompt += `3. 任务完成后，**先验证**：检查工具调用是否成功、产出数据是否完整\n`
   prompt += `4. 验证通过后调用 todo_write 将该任务标记为 "completed"\n`
   prompt += `5. **在回复末尾**输出标记 \`[TASK_COMPLETE:<任务id>]\` 表示此任务结束\n`
@@ -2154,98 +2160,196 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
     prompt += `\n格式详见你的 skill prompt 中的「create_analysis_task 的 result 参数」章节。`
     prompt += `\n不要依赖系统自动提取——你必须主动调用 create_analysis_task 工具。`
   } else {
-    // Default: order fulfillment analysis — auto-extract from assistant response
+    // Default: order fulfillment analysis — call create_analysis_task tool
     prompt += `\n\n## 分析结果持久化（强制要求）`
+    prompt += `\n完成分析后，你必须调用 \`create_analysis_task\` 工具将结果保存到数据库。`
+    prompt += `\n该工具的 result 参数是一个包含 orders 数组的 JSON 对象。每个 order 必须包含 problemCategories（问题看板卡片数据），不能为空数组。`
 
-    prompt += `\n你必须在回复末尾输出以下 JSON 代码块。系统会自动从中提取数据、创建分析任务并保存到数据库。`
-    prompt += `\n如果订单数据中没有某些字段，用 "N/A" 代替，但不要省略任何字段。`
-    prompt += `\n你不需要调用任何工具来创建分析任务——系统会在你输出 JSON 后自动处理。`
+    prompt += `\n\n**result 参数格式（字段名使用 camelCase，problemCategories 中用 problems 不是 cards）：**`
+    prompt += `\n{"orders":[{"contractNumber":"<订单编号>","customer":"<客户>","amount":247.3,"shipmentRatio":96,"status":"发货中","statusClass":"green","sales":"<销售员>","region":"<区域>","orderDate":"<日期>","problemCategories":[{"name":"<问题分类名>","type":1,"problems":[{"materialCode":"<物料编码>","materialName":"<物料名称>","partName":"<部件名>","partNumber":"<部件编号>","tags":[{"label":"待处理","variant":"pill"}]}]}],"deliveryTables":[]}]}`
 
-    prompt += `\n\n\`\`\`json
-{
-  "orders": [
-    {
-      "contractNumber": "订单系统编号（使用数据中的 id 字段值，如 HT202598001，不是 contractNumber 字段）",
-      "customer": "客户名称",
-      "amount": "合同金额（万元）",
-      "shipmentRatio": 65,
-      "status": "待发货",
-      "statusClass": "blue",
-      "sales": "销售员",
-      "region": "区域",
-      "orderDate": "2024/11/14",
-      "problemCategories": [
-        {
-          "name": "问题分类名称（如：未接发货、入库登记、发货方式存在问题、未知问题）",
-          "type": 1,
-          "problems": [
-            {
-              "materialCode": "物料编码",
-              "materialName": "物料名称",
-              "partName": "部件名称",
-              "partNumber": "部件编号",
-              "tags": [{"label": "待处理", "variant": "pill"}, {"label": "紧急", "variant": "urgent"}],
-              "cardDetail": {
-                "materialInfo": {
-                  "需求属性": "控制系统",
-                  "需求类别": "产品型",
-                  "品牌": "CCU-2000",
-                  "需求系列描述": "断路器控制板",
-                  "需求定制产品": "定制",
-                  "发货方式": "直发客户"
-                },
-                "aiAnalysis": "该物料当前存在发货延迟风险，主要原因是...",
-                "deliveryPath": [
-                  {"docType": "销售合同订单", "docNo": "SO_20240001", "badge": "BPM", "qty": 100, "status": "生效", "problemPoint": "合同约定数量与实际发货存在偏差"},
-                  {"docType": "发货申请单", "docNo": "SA_20240001", "badge": "BPM", "qty": 100, "status": "审核中", "problemPoint": "审核流程卡在财务环节"},
-                  {"docType": "销售出库单", "docNo": "DN_20240001", "badge": "SAP", "qty": 80, "status": "已过账", "problemPoint": "实发数量80，短少20"}
-                ]
-              }
-            }
-          ]
-        }
-      ],
-      "deliveryTables": [
-        {
-          "title": "销售合同订单",
-          "badge": "BPM",
-          "items": [
-            {"docNo": "SO_20240001", "status": "生效", "lineNo": "10", "sign": "蓝字", "qty": 100}
-          ]
-        }
-      ]
-    }
-  ]
-}
-\`\`\``
-
-    prompt += `\n\n注意事项：`
-    prompt += `\n- statusClass 取值：blue（待发货）、green（进行中）、orange（待确认）`
+    prompt += `\n\n**字段说明：**`
+    prompt += `\n- statusClass：blue=待发货、green=进行中、orange=待确认`
+    prompt += `\n- problemCategories 必须包含至少1个分类，每个分类的 problems 数组至少1个元素`
     prompt += `\n- type 取值：1=问题类型1, 2=问题类型2, 3=问题类型3, 4=问题类型4`
-    prompt += `\n- variant 取值：pill（普通标签）、urgent（紧急）、normal（常规）`
-    prompt += `\n- priority 取值：high（高）、medium（中）、low（低）`
-    prompt += `\n- status（待办）取值：pending（待处理）、progress（进行中）、overdue（已逾期）`
-    prompt += `\n- taskType 取值：agent（Agent任务）、decision（决策任务）、manual（手工任务）`
-    prompt += `\n- 回复最后必须包含上述 JSON 代码块，系统会自动从中提取数据并创建分析任务，没有这个 JSON 看板页面将无法展示分析结果`
-    prompt += `\n- 在 JSON 之前，用自然语言输出分析总结`
+    prompt += `\n- tags 的 variant：pill（普通）、urgent（紧急）、normal（常规）`
+    prompt += `\n- shipmentRatio 和 amount 为数字类型，不带引号`
+    prompt += `\n- 重要：字段名必须使用 camelCase（materialCode/materialName/partName/partNumber），分类中的问题数组字段名是 problems（不是 cards）`
+    prompt += `\n- 根据分析发现的问题生成卡片，例如：发货率低→创建"发货延迟"类卡片，到货率落后发货率→创建"物流运输"类卡片`
+
+    prompt += `\n\n**示例（2个订单各有问题分类和卡片）：**`
+    prompt += `\ncreate_analysis_task({ title: "HT202558001等2个订单履约分析", result: { orders: [`
+    prompt += `\n  { contractNumber: "HT202558001", customer: "跨境电商运营有限公司", amount: 247.3, shipmentRatio: 96, status: "发货中", statusClass: "green", sales: "刘洋", region: "华东", orderDate: "2025/02/01",`
+    prompt += `\n    problemCategories: [{ name: "物流运输延迟", type: 1, problems: [{ materialCode: "MAT-001", materialName: "断路器控制板", partName: "控制单元", partNumber: "CCU-2000-A", tags: [{ label: "待处理", variant: "pill" }, { label: "发货延迟", variant: "urgent" }] }] }], deliveryTables: [] },`
+    prompt += `\n  { contractNumber: "HT202530002", customer: "山东钢铁物流有限公司", amount: 390.5, shipmentRatio: 65, status: "发货中", statusClass: "orange", sales: "孙晶", region: "华东", orderDate: "2025/01/05",`
+    prompt += `\n    problemCategories: [{ name: "发货进度滞后", type: 2, problems: [{ materialCode: "MAT-002", materialName: "集货箱体", partName: "箱体组件", partNumber: "BOX-500-B", tags: [{ label: "紧急", variant: "urgent" }] }] }], deliveryTables: [] }`
+    prompt += `\n] } })`
+    prompt += `\n\n调用后系统会自动创建任务并跳转到分析任务页面。如果没有调用此工具或 problemCategories 为空，看板页面将无法展示分析卡片。`
   }
-  prompt += `\n- 禁止在分析阶段调用 generate_todos 工具，待办清单仅由用户在界面上点击按钮触发`
+  prompt += `\n- 当用户点击界面「生成待办清单」按钮时，会发送类似"请为以下合同生成待办清单：..."的消息。收到此消息时，必须调用 generate_todos 工具，不要跳过。其他情况下不要自动调用 generate_todos，等待用户手动触发`
 
   return prompt
 }
 
+function normalizeResultForBackend(data: Record<string, unknown>): Record<string, unknown> {
+  if (!data.orders || !Array.isArray(data.orders)) return data
+
+  const orders = data.orders.map((order: any) => {
+    const o = { ...order }
+
+    // Normalize problemCategories: cards → problems, snake_case → camelCase
+    if (Array.isArray(o.problemCategories)) {
+      o.problemCategories = o.problemCategories.map((cat: any) => {
+        const c = { ...cat }
+        // Convert cards → problems
+        if (Array.isArray(c.cards) && !Array.isArray(c.problems)) {
+          c.problems = c.cards
+          delete c.cards
+        }
+        // Normalize problem fields: snake_case → camelCase
+        if (Array.isArray(c.problems)) {
+          c.problems = c.problems.map((p: any) => ({
+            materialCode: p.materialCode || p.material_code || '',
+            materialName: p.materialName || p.material_name || '',
+            partName: p.partName || p.part_name || '',
+            partNumber: p.partNumber || p.part_number || '',
+            tags: Array.isArray(p.tags) ? p.tags : [],
+            status: p.status || '待处理',
+            ...Object.fromEntries(
+              Object.entries(p).filter(([k]) =>
+                !['materialCode', 'materialName', 'partName', 'partNumber', 'tags', 'status',
+                  'material_code', 'material_name', 'part_name', 'part_number', 'cards'].includes(k)
+              )
+            ),
+          }))
+        }
+        // Ensure type is a number
+        if (typeof c.type === 'string') {
+          c.type = parseInt(c.type, 10) || 1
+        }
+        return c
+      })
+    }
+
+    // Normalize deliveryTables
+    if (Array.isArray(o.deliveryTables)) {
+      o.deliveryTables = o.deliveryTables.map((dt: any) => ({
+        title: dt.title || '',
+        badge: dt.badge || '',
+        items: Array.isArray(dt.items) ? dt.items.map((item: any) => ({
+          docNo: item.docNo || item.doc_no || '',
+          status: item.status || '',
+          lineNo: item.lineNo || item.line_no || '',
+          sign: item.sign || '',
+          qty: item.qty || 0,
+        })) : [],
+      }))
+    }
+
+    return o
+  })
+
+  return { ...data, orders }
+}
+
 async function saveStructuredResult(analysisId: string, jsonStr: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const parsed = normalizeResultForBackend(JSON.parse(jsonStr))
+      const res = await fetch(`${BACKEND_API}/analysis/${analysisId}/result`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed),
+      })
+      if (res.ok) return true
+      const body = await res.text().catch(() => '')
+      console.error(`[AgentLoop] saveStructuredResult attempt ${attempt + 1} failed (${res.status}):`, body.slice(0, 200))
+    } catch (err) {
+      console.error(`[AgentLoop] saveStructuredResult attempt ${attempt + 1} error:`, err)
+    }
+    if (attempt < 1) await new Promise(r => setTimeout(r, 500))
+  }
+  return false
+}
+
+function hasOrdersInResult(result: Record<string, unknown>): boolean {
+  const orders = result.orders
+  return Array.isArray(orders) && orders.length > 0
+}
+
+function buildFallbackResult(
+  sessionMessages: Array<{ role: string; content: string }>,
+  contractIds: string[],
+): { orders: unknown[] } | null {
+  // Scan ALL messages (user + tool) for JSON data blocks with order data
+  const allContent = sessionMessages
+    .filter((m) => m.role === 'user' || m.role === 'tool')
+    .map((m) => m.content)
+    .join('\n')
+
+  // Find all ```json blocks
+  const jsonBlocks: string[] = []
+  const regex = /\`\`\`json\s*([\s\S]*?)\`\`\`/g
+  let m: RegExpExecArray | null
+  while ((m = regex.exec(allContent)) !== null) {
+    jsonBlocks.push(m[1].trim())
+  }
+
+  console.log(`[AgentLoop] buildFallbackResult: found ${jsonBlocks.length} JSON blocks, ${contractIds.length} contractIds`)
+
+  for (const jsonStr of jsonBlocks) {
+    try {
+      const data = JSON.parse(jsonStr)
+      const orderList = Array.isArray(data) ? data : data.orders || data.data || []
+      if (!Array.isArray(orderList) || orderList.length === 0) continue
+
+      const orders = orderList.map((o: any) => ({
+        contractNumber: o.id || o.contractNumber || '',
+        customer: o.customer || '',
+        amount: typeof o.amount === 'number' ? o.amount / 10000 : Number(o.amount || 0) / 10000,
+        shipmentRatio: o.shipmentRatio ?? 0,
+        status: (o.shipmentRatio ?? 0) >= 95 ? '已发货' : (o.shipmentRatio ?? 0) >= 50 ? '发货中' : '待发货',
+        statusClass: (o.shipmentRatio ?? 0) >= 95 ? 'green' : (o.shipmentRatio ?? 0) >= 50 ? 'blue' : 'orange',
+        sales: o.salesperson || '',
+        region: o.region || '',
+        orderDate: o.orderDate || '',
+        problemCategories: [] as unknown[],
+        deliveryTables: [] as unknown[],
+      }))
+      console.log(`[AgentLoop] buildFallbackResult: constructed ${orders.length} orders from JSON block`)
+      return { orders }
+    } catch {
+      continue
+    }
+  }
+
+  console.log('[AgentLoop] buildFallbackResult: no order data found')
+  return null
+}
+
+async function buildFallbackFromApi(orderIds: string[]): Promise<{ orders: unknown[] } | null> {
+  const orderData = await fetchOrderData(orderIds)
+  if (!orderData) return null
   try {
-    const parsed = JSON.parse(jsonStr)
-    const res = await fetch(`${BACKEND_API}/analysis/${analysisId}/result`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(parsed),
-    })
-    return res.ok
-  } catch (err) {
-    console.error('[AgentLoop] Failed to save structured result:', err)
-    return false
+    const orderList = JSON.parse(orderData)
+    if (!Array.isArray(orderList) || orderList.length === 0) return null
+    const orders = orderList.map((o: any) => ({
+      contractNumber: o.id || o.contractNumber || '',
+      customer: o.customer || '',
+      amount: typeof o.amount === 'number' ? o.amount / 10000 : Number(o.amount || 0) / 10000,
+      shipmentRatio: o.shipmentRatio ?? 0,
+      status: (o.shipmentRatio ?? 0) >= 95 ? '已发货' : (o.shipmentRatio ?? 0) >= 50 ? '发货中' : '待发货',
+      statusClass: (o.shipmentRatio ?? 0) >= 95 ? 'green' : (o.shipmentRatio ?? 0) >= 50 ? 'blue' : 'orange',
+      sales: o.salesperson || '',
+      region: o.region || '',
+      orderDate: o.orderDate || '',
+      problemCategories: [] as unknown[],
+      deliveryTables: [] as unknown[],
+    }))
+    console.log(`[AgentLoop] buildFallbackFromApi: constructed ${orders.length} orders via API`)
+    return { orders }
+  } catch {
+    return null
   }
 }
 

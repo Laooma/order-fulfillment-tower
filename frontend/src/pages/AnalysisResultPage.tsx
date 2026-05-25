@@ -792,6 +792,7 @@ export default function AnalysisResultPage() {
   useEffect(() => {
     const cfg: ChatPageConfig = {
       page: 'analysis',
+      taskId: taskId || undefined,
       onAnalysisComplete: handleAnalysisComplete,
       onA2uiSurface: (data: { title: string; messages: unknown[] }) => {
         setA2uiSurfaces({ title: data.title, messages: data.messages as A2uiMessageBase[] })
@@ -954,8 +955,18 @@ export default function AnalysisResultPage() {
       .map((c) => c.number)
     setGeneratingTodos(true)
 
+    // Safety timeout: reset generating state after 60s to prevent perpetual hang
+    const safetyTimer = setTimeout(() => {
+      setGeneratingTodos(false)
+    }, 60_000)
+
     const storeSendMessage = useChatStore.getState().sendMessage
-    storeSendMessage?.(
+    if (!storeSendMessage) {
+      setGeneratingTodos(false)
+      clearTimeout(safetyTimer)
+      return
+    }
+    storeSendMessage(
       `请为以下合同生成待办清单：${selectedContracts.join('、')}`,
       { taskId, orders: selectedContracts },
     )
