@@ -458,7 +458,7 @@ export default function TaskListPage() {
                     截止日期 <span className="sort-arrow">{sortArrow('dueDate')}</span>
                   </th>
                   <th style={{ width: '80px' }}>状态</th>
-                  <th style={{ width: '130px' }}>操作</th>
+                  <th style={{ width: '130px' }} className="col-sticky-right">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -522,7 +522,7 @@ export default function TaskListPage() {
                         {task.statusLabel}
                       </span>
                     </td>
-                    <td>
+                    <td className="col-sticky-right">
                       <div className="td-actions">
                         <button
                           onClick={() => navigate(getDetailPath(task.type, task.id))}

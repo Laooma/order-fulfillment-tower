@@ -261,7 +261,7 @@ function ListView() {
               </th>
               <th style={{ width: '110px' }}>处理完成时间</th>
               <th style={{ width: '130px' }}>关联销售合同编号</th>
-              <th style={{ width: '90px' }}>操作</th>
+              <th style={{ width: '90px' }} className="col-sticky-right">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -305,7 +305,7 @@ function ListView() {
                 <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
                   {t.relatedContracts.join(', ')}
                 </td>
-                <td onClick={(e) => e.stopPropagation()}>
+                <td className="col-sticky-right" onClick={(e) => e.stopPropagation()}>
                   <div className="action-btns">
                     <button
                       className="action-btn"

@@ -1937,6 +1937,32 @@ body {
 .task-table tbody tr.row-overdue td { background: oklch(99% 0.01 35); }
 .task-table tbody tr.row-overdue:hover td { background: oklch(98% 0.015 35) !important; }
 
+.task-table th.col-sticky-right {
+  position: sticky;
+  right: 0;
+  z-index: 12;
+  background: var(--color-accent);
+  border-left: 1px solid oklch(52% 0.18 255);
+}
+.task-table td.col-sticky-right {
+  position: sticky;
+  right: 0;
+  background: #fff;
+  border-left: 1px solid oklch(95% 0.003 250);
+}
+.task-table tbody tr:hover td.col-sticky-right {
+  background: oklch(98% 0.003 250);
+}
+.task-table tbody tr.selected td.col-sticky-right {
+  background: var(--color-accent-bg);
+}
+.task-table tbody tr.row-overdue td.col-sticky-right {
+  background: oklch(99% 0.01 35);
+}
+.task-table tbody tr.row-overdue:hover td.col-sticky-right {
+  background: oklch(98% 0.015 35) !important;
+}
+
 /* Table Cell Styles */
 .td-id {
   font-family: var(--font-mono); font-size: 11px; color: var(--color-accent);
@@ -6749,6 +6775,12 @@ body {
 .dark .task-table td { border-bottom-color: oklch(26% 0.008 255); }
 .dark .task-table tbody tr.row-overdue td { background: oklch(24% 0.02 25); }
 .dark .task-table tbody tr.row-overdue:hover td { background: oklch(26% 0.03 25) !important; }
+.dark .task-table th.col-sticky-right { background: var(--color-accent); border-left-color: oklch(40% 0.12 255); }
+.dark .task-table td.col-sticky-right { background: oklch(23% 0.004 255); }
+.dark .task-table tbody tr:hover td.col-sticky-right { background: oklch(25% 0.008 255); }
+.dark .task-table tbody tr.selected td.col-sticky-right { background: var(--color-accent-bg); }
+.dark .task-table tbody tr.row-overdue td.col-sticky-right { background: oklch(24% 0.02 25); }
+.dark .task-table tbody tr.row-overdue:hover td.col-sticky-right { background: oklch(26% 0.03 25) !important; }
 
 /* Tag chips — darken backgrounds while keeping text readable */
 .dark .tag-chip.blue { background: oklch(26% 0.04 255); color: oklch(72% 0.14 255); border-color: oklch(30% 0.06 255); }
