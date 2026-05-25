@@ -2608,6 +2608,10 @@ function CronTaskPanel() {
   const [formName, setFormName] = useState('')
   const [formDesc, setFormDesc] = useState('')
   const [formSchedule, setFormSchedule] = useState('* * * * *')
+  const [scheduleMode, setScheduleMode] = useState<'interval' | 'fixed'>('interval')
+  const [intervalMinutes, setIntervalMinutes] = useState(5)
+  const [fixedHour, setFixedHour] = useState(8)
+  const [fixedMinute, setFixedMinute] = useState(0)
   const [formScript, setFormScript] = useState('')
   const [formScriptType, setFormScriptType] = useState<'bash' | 'python' | 'js'>('bash')
   const [formCallAgent, setFormCallAgent] = useState(false)
@@ -2623,6 +2627,37 @@ function CronTaskPanel() {
 
   // Skills list for agent skill dropdown
   const [skills, setSkills] = useState<Skill[]>([])
+
+  // Parse cron expression into schedule mode + params
+  const parseCronToMode = (cron: string): { mode: 'interval' | 'fixed'; interval: number; hour: number; minute: number } => {
+    const matchInterval = cron.match(/^\*\/(\d+) \* \* \* \*$/)
+    if (matchInterval) {
+      return { mode: 'interval', interval: parseInt(matchInterval[1]), hour: 0, minute: 0 }
+    }
+    const matchFixed = cron.match(/^(\d+) (\d+) \* \* \*$/)
+    if (matchFixed) {
+      return { mode: 'fixed', interval: 5, hour: parseInt(matchFixed[2]), minute: parseInt(matchFixed[1]) }
+    }
+    // Fallback: treat as interval mode
+    return { mode: 'interval', interval: 5, hour: 8, minute: 0 }
+  }
+
+  // Generate cron expression from mode + params
+  const buildCron = (mode: 'interval' | 'fixed', interval: number, hour: number, minute: number): string => {
+    if (mode === 'interval') {
+      return `*/${interval} * * * *`
+    }
+    return `${minute} ${hour} * * *`
+  }
+
+  const applyScheduleChange = (mode: 'interval' | 'fixed', interval: number, hour: number, minute: number) => {
+    setScheduleMode(mode)
+    setIntervalMinutes(interval)
+    setFixedHour(hour)
+    setFixedMinute(minute)
+    setFormSchedule(buildCron(mode, interval, hour, minute))
+    setFormModified(true)
+  }
 
   const loadTaskList = useCallback(() => {
     api.agent.cronTasks()
@@ -2644,6 +2679,11 @@ function CronTaskPanel() {
       setFormName(t.name)
       setFormDesc(t.description)
       setFormSchedule(t.schedule)
+      const parsed = parseCronToMode(t.schedule)
+      setScheduleMode(parsed.mode)
+      setIntervalMinutes(parsed.interval)
+      setFixedHour(parsed.hour)
+      setFixedMinute(parsed.minute)
       setFormScript(t.script)
       setFormScriptType(t.scriptType)
       setFormCallAgent(t.callAgent)
@@ -2743,16 +2783,6 @@ function CronTaskPanel() {
     }
   }
 
-  const cronPresets = [
-    { label: '每分钟', value: '* * * * *' },
-    { label: '每5分钟', value: '*/5 * * * *' },
-    { label: '每小时', value: '0 * * * *' },
-    { label: '每天8点', value: '0 8 * * *' },
-    { label: '每天18点', value: '0 18 * * *' },
-    { label: '每周一9点', value: '0 9 * * 1' },
-    { label: '每月1号10点', value: '0 10 1 * *' },
-  ]
-
   if (loading) {
     return <div className="settings-empty"><p>加载中...</p></div>
   }
@@ -2823,6 +2853,14 @@ function CronTaskPanel() {
                   {formEnabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
                   {formEnabled ? '已启用' : '已禁用'}
                 </button>
+                <button
+                  className="btn btn-ghost"
+                  style={{ height: 28, fontSize: 11, color: 'var(--color-accent)' }}
+                  onClick={() => handleRun(selectedTaskId!)}
+                  disabled={runningTaskId === selectedTaskId}
+                >
+                  <Play size={12} /> {runningTaskId === selectedTaskId ? '执行中...' : '立即执行'}
+                </button>
                 <button className="btn btn-primary" style={{ height: 28, fontSize: 11 }} onClick={handleSave} disabled={saving || !formModified}>
                   <Save size={12} /> {saving ? '保存中...' : '保存'}
                 </button>
@@ -2843,25 +2881,75 @@ function CronTaskPanel() {
                 </div>
               </div>
 
-              {/* Cron schedule */}
+              {/* Schedule mode selector */}
               <div className="settings-form-group">
-                <label className="settings-form-label">Cron 表达式</label>
-                <input
-                  className="settings-form-input"
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}
-                  value={formSchedule}
-                  onChange={(e) => handleFormChange(setFormSchedule, e.target.value)}
-                />
-                <div className="cron-presets">
-                  {cronPresets.map((p) => (
-                    <button
-                      key={p.value}
-                      className={`cron-preset-btn ${formSchedule === p.value ? 'active' : ''}`}
-                      onClick={() => handleFormChange(setFormSchedule, p.value)}
+                <label className="settings-form-label">执行时间</label>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 13 }}>
+                    <input
+                      type="radio"
+                      name="scheduleMode"
+                      checked={scheduleMode === 'interval'}
+                      onChange={() => applyScheduleChange('interval', intervalMinutes, fixedHour, fixedMinute)}
+                    />
+                    按固定时间间隔
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 13 }}>
+                    <input
+                      type="radio"
+                      name="scheduleMode"
+                      checked={scheduleMode === 'fixed'}
+                      onChange={() => applyScheduleChange('fixed', intervalMinutes, fixedHour, fixedMinute)}
+                    />
+                    按每日固定时间
+                  </label>
+                </div>
+
+                {scheduleMode === 'interval' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 13 }}>每</span>
+                    <select
+                      className="settings-form-input"
+                      style={{ width: 100 }}
+                      value={intervalMinutes}
+                      onChange={(e) => applyScheduleChange('interval', parseInt(e.target.value), fixedHour, fixedMinute)}
                     >
-                      {p.label}
-                    </button>
-                  ))}
+                      {[1, 2, 5, 10, 15, 30, 60].map((n) => (
+                        <option key={n} value={n}>{n} 分钟</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: 13 }}>执行一次</span>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 13 }}>每日</span>
+                    <select
+                      className="settings-form-input"
+                      style={{ width: 80 }}
+                      value={fixedHour}
+                      onChange={(e) => applyScheduleChange('fixed', intervalMinutes, parseInt(e.target.value), fixedMinute)}
+                    >
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: 13 }}>时</span>
+                    <select
+                      className="settings-form-input"
+                      style={{ width: 80 }}
+                      value={fixedMinute}
+                      onChange={(e) => applyScheduleChange('fixed', intervalMinutes, fixedHour, parseInt(e.target.value))}
+                    >
+                      {Array.from({ length: 60 }, (_, i) => (
+                        <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: 13 }}>分</span>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                  Cron: {formSchedule}
                 </div>
               </div>
 

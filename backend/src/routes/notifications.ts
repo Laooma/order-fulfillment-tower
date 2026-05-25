@@ -423,8 +423,10 @@ async function sendFeishuApp(config: Record<string, any>, to: string, _subject: 
   try {
     const appId = config.app_id
     const appSecret = config.app_secret
-    const receiveIdType = config.receive_id_type || 'open_id'
-    const receiveId = to || config.receive_id
+    // If 'to' looks like a valid Feishu ID (ou_/oc_/on_ prefix), use it; otherwise fallback to config default
+    const isValidFeishuId = (id: string) => /^o[ucn]_/.test(id)
+    const receiveIdType = isValidFeishuId(to) ? (config.receive_id_type || 'open_id') : (config.receive_id_type || 'chat_id')
+    const receiveId = isValidFeishuId(to) ? to : (config.receive_id || to)
 
     if (!appId || !appSecret) {
       return { success: false, error: 'Missing app_id or app_secret in config' }

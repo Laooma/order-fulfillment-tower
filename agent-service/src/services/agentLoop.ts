@@ -239,6 +239,127 @@ async function handleFetchBizData(args: Record<string, unknown>): Promise<string
   }
 }
 
+const GET_PENDING_TODOS_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'get_pending_todos',
+    description: '获取所有未完成的待办任务清单。包括分析任务生成的待办和执行任务中的未完结待办。按负责人分组返回，包含任务ID、类别、描述、优先级、截止日期、状态等信息。',
+    parameters: {
+      type: 'object',
+      properties: {
+        assignee: { type: 'string', description: '可选，按负责人筛选。不传则返回全部。' },
+      },
+      required: [],
+    },
+  },
+}
+
+async function handleGetPendingTodos(args: Record<string, unknown>): Promise<string> {
+  try {
+    const BACKEND_API = process.env.BACKEND_API_URL || 'http://localhost:3001/api'
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
+    const assignee = args.assignee as string | undefined
+
+    // Fetch analysis tasks and execution tasks in parallel
+    const [analysisRes, tasksRes] = await Promise.all([
+      fetch(`${BACKEND_API}/analysis?pageSize=100`),
+      fetch(`${BACKEND_API}/tasks?pageSize=200`),
+    ])
+
+    const analyses = (await analysisRes.json() as any).data || []
+    const execTasks = (await tasksRes.json() as any).data || []
+
+    const allTodos: any[] = []
+
+    // Fetch todos from analysis tasks
+    for (const a of analyses) {
+      if (a.status === 'todos_generated') {
+        try {
+          const todoRes = await fetch(`${BACKEND_API}/analysis/${encodeURIComponent(a.id)}/todos`)
+          const todoData = await todoRes.json() as any
+          if (todoData.data) {
+            for (const t of todoData.data) {
+              t._source = 'analysis'
+              t._analysisTitle = a.title
+              t._analysisId = a.id
+              t._url = `${FRONTEND_URL}/analysis/${a.id}`
+              allTodos.push(t)
+            }
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    // Add execution tasks (status != done)
+    for (const t of execTasks) {
+      if (t.status !== 'done') {
+        const taskType = t.type || 'manual'
+        const execUrl = `${FRONTEND_URL}/task/${taskType}/${t.id}`
+        allTodos.push({
+          id: t.id,
+          category: t.categoryLabel || '未知',
+          description: t.title || '',
+          priority: t.priority || 'medium',
+          assignee: t.assignee || '未分配',
+          dueDate: t.dueDate || '',
+          status: t.statusLabel || '未知',
+          _source: 'task',
+          _analysisTitle: '',
+          _analysisId: '',
+          _url: execUrl,
+        })
+      }
+    }
+
+    // Filter by assignee if specified
+    const filtered = assignee
+      ? allTodos.filter((t: any) => t.assignee === assignee)
+      : allTodos
+
+    // Group by assignee
+    const grouped: Record<string, any[]> = {}
+    for (const t of filtered) {
+      const name = t.assignee || '未分配'
+      if (!grouped[name]) grouped[name] = []
+      grouped[name].push(t)
+    }
+
+    // Build summary
+    const result: any = {
+      total: filtered.length,
+      assigneeCount: Object.keys(grouped).length,
+      byPriority: {
+        high: filtered.filter((t: any) => t.priority === 'high').length,
+        medium: filtered.filter((t: any) => t.priority === 'medium').length,
+        low: filtered.filter((t: any) => t.priority === 'low').length,
+      },
+      overdue: filtered.filter((t: any) => t.dueDate && t.dueDate < new Date().toISOString().slice(0, 10)).length,
+      byAssignee: {} as Record<string, any>,
+    }
+
+    for (const [name, todos] of Object.entries(grouped)) {
+      result.byAssignee[name] = {
+        count: todos.length,
+        high: todos.filter((t: any) => t.priority === 'high').length,
+        overdue: todos.filter((t: any) => t.dueDate && t.dueDate < new Date().toISOString().slice(0, 10)).length,
+        todos: todos.map((t: any) => ({
+          id: t.id,
+          category: t.category,
+          description: (t.description || '').slice(0, 60),
+          priority: t.priority,
+          dueDate: t.dueDate,
+          status: t.status,
+          url: t._url || `${FRONTEND_URL}/tasks`,
+        })),
+      }
+    }
+
+    return JSON.stringify(result, null, 2)
+  } catch (err: any) {
+    return `Error fetching pending todos: ${err.message}`
+  }
+}
+
 const SHOW_ANALYSIS_RESULT_TOOL = {
   type: 'function' as const,
   function: {
@@ -1279,7 +1400,7 @@ export async function handleAgentMessage(
   // Determine whether to enable A2UI visualization
   const enableA2ui = shouldEnableA2ui(message, skill)
 
-  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'fetch_biz_data'])
+  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'get_pending_todos', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'fetch_biz_data'])
     // Normalize function name for comparison (strip underscores, lowercase) to match built-in names
     const BUILTIN_NORMALIZED = new Set(Array.from(BUILTIN_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
     const MCP_TOOLS_RAW = mcp.getTools().map((t) => ({
@@ -1300,6 +1421,7 @@ export async function handleAgentMessage(
       SEND_NOTIFICATION_TOOL,
       LIST_NOTIFICATION_CHANNELS_TOOL,
       FETCH_BIZ_DATA_TOOL,
+      GET_PENDING_TODOS_TOOL,
       CREATE_ANALYSIS_TASK_TOOL,
       GENERATE_TODOS_TOOL,
       ...(enableA2ui ? [SHOW_ANALYSIS_RESULT_TOOL] : []),
@@ -1568,6 +1690,23 @@ export async function handleAgentMessage(
               sessionId,
               toolName,
               toolOutput: '业务数据已获取',
+            })
+            continue
+          }
+
+          // Handle built-in get_pending_todos tool
+          if (normalizedName === 'getpendingtodos') {
+            const resultText = await handleGetPendingTodos(toolArgs)
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: '待办数据已获取',
             })
             continue
           }
@@ -1997,6 +2136,7 @@ function getToolLabel(name: string, args: Record<string, unknown>): string {
     case 'generate_todos': return `生成待办清单: ${String(args.taskId || '')}`
     case 'send_notification': return `发送通知: ${String(args.channelId || '')}`
     case 'list_notification_channels': return `获取通知渠道列表`
+    case 'get_pending_todos': return `获取待办任务清单`
     case 'fetch_biz_data': return `获取业务数据`
     default: return `调用 ${name}`
   }
@@ -2015,16 +2155,85 @@ export async function handleAgentHttpRequest(skillId: string, prompt: string): P
   }
 
   const systemPrompt = buildSystemPrompt(skill, undefined)
-  const response = await chatCompletion({
-    model: modelId,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: prompt },
-    ],
-    temperature: 0.7,
-  }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl })
+  const tools = [
+    SEND_NOTIFICATION_TOOL,
+    LIST_NOTIFICATION_CHANNELS_TOOL,
+    GET_PENDING_TODOS_TOOL,
+  ]
 
-  return { content: response.content || '', skillName: skill.name }
+  const messages: Array<{ role: string; content: string; toolCalls?: any; tool_call_id?: string }> = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: prompt },
+  ]
+
+  let finalContent = ''
+  const MAX_ITERS = 10
+
+  for (let iter = 0; iter < MAX_ITERS; iter++) {
+    const response = await chatCompletion({
+      model: modelId,
+      messages: messages.map((m) => {
+        const base: any = { role: m.role, content: m.content }
+        if (m.role === 'assistant' && m.toolCalls) {
+          base.tool_calls = m.toolCalls
+        }
+        if (m.role === 'tool' && m.tool_call_id) {
+          base.tool_call_id = m.tool_call_id
+        }
+        return base
+      }),
+      temperature: 0.7,
+      tools,
+    }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl })
+
+    // Save text content
+    if (response.content) {
+      finalContent = response.content
+    }
+
+    // If no tool calls, we're done
+    if (!response.toolCalls || response.toolCalls.length === 0) {
+      break
+    }
+
+    // Record assistant message with tool calls
+    messages.push({
+      role: 'assistant',
+      content: response.content || '',
+      toolCalls: response.toolCalls,
+    })
+
+    // Dispatch each tool call
+    for (const tc of response.toolCalls) {
+      const toolName = tc.function?.name || ''
+      const normalizedName = toolName.toLowerCase().replace(/_/g, '')
+      let toolArgs: Record<string, unknown> = {}
+      try {
+        toolArgs = JSON.parse(tc.function?.arguments || '{}')
+      } catch { /* ignore parse errors */ }
+
+      console.log(`[AgentHTTP] Dispatching tool: ${toolName}`, JSON.stringify(toolArgs).slice(0, 200))
+
+      let toolResult: string
+      if (normalizedName === 'sendnotification') {
+        toolResult = await handleSendNotification(toolArgs)
+      } else if (normalizedName === 'listnotificationchannels') {
+        toolResult = await handleListNotificationChannels()
+      } else if (normalizedName === 'getpendingtodos') {
+        toolResult = await handleGetPendingTodos(toolArgs)
+      } else {
+        toolResult = `Unknown tool: ${toolName}`
+      }
+
+      messages.push({
+        role: 'tool',
+        content: toolResult,
+        tool_call_id: tc.id,
+      })
+    }
+  }
+
+  return { content: finalContent, skillName: skill.name }
 }
 
 function send(ws: WebSocket, payload: Record<string, unknown>) {
@@ -2044,7 +2253,11 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `- save_hook: 将新创建的 Hook 保存到文件系统（hookId、name、description、event、script 五个必填参数，enabled 和 matcher 可选）\n`
   prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）、taskId（可选，关联的分析任务ID）\n`
   prompt += `- create_analysis_task: 完成分析后必须调用，将结构化结果持久化到数据库。参数：title（任务标题）、result（包含 orders 数组的JSON对象，每个order含 contractNumber/customer/amount/shipmentRatio/status/statusClass/sales/region/orderDate/problemCategories/deliveryTables 等字段）。调用后返回 taskId，可用于后续 show_analysis_result。\n`
-  prompt += `- generate_todos: 当用户消息以"请为以下合同生成待办清单"开头时（这是用户点击了界面按钮），必须调用此工具。其他场景仅在用户直接要求"生成待办清单"、"创建执行任务"时才调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办\n\n`
+  prompt += `- generate_todos: 当用户消息以"请为以下合同生成待办清单"开头时（这是用户点击了界面按钮），必须调用此工具。其他场景仅在用户直接要求"生成待办清单"、"创建执行任务"时才调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办\n`
+  prompt += `- list_notification_channels: 列出所有已配置的通知渠道（飞书机器人、邮件、企微等）。在发送通知前先调用此工具确认可用的渠道。\n`
+  prompt += `- send_notification: 通过通知渠道发送消息。参数：channelId（渠道ID，从 list_notification_channels 获取）、subject（标题，用于邮件）、message（消息正文，支持 Markdown 格式，飞书和企微机器人会渲染 Markdown）。\n`
+  prompt += `- fetch_biz_data: 查询业务合同/装置/包/物料的层级数据。参数：contractId（合同ID）或 packageId（包ID）。\n`
+  prompt += `- get_pending_todos: 获取所有未完成的待办任务清单（含分析任务生成的待办和执行任务中的未完结待办）。按负责人分组，包含任务类别、描述、优先级、截止日期。可选参数 assignee 按人筛选。\n\n`
 
   // Add references and scripts info
   if (skill.references.length > 0 || skill.scripts.length > 0) {

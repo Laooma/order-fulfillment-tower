@@ -76,6 +76,17 @@ const types: Array<{ t: 'agent' | 'decision' | 'manual'; label: string }> = [
   { t: 'agent', label: 'Agent任务' }, { t: 'decision', label: '决策任务' }, { t: 'manual', label: '手工任务' },
 ]
 
+const skillOptions = [
+  { id: 'order-fulfillment', name: '订单履约分析' },
+  { id: 'material-kit-check', name: '物料预缺与齐套分析' },
+  { id: 'fat-planning', name: 'FAT计划排程' },
+  { id: 'shipment-tracking', name: '发货进度跟踪' },
+  { id: 'quality-diagnosis', name: '质量异常诊断' },
+  { id: 'contract-review', name: '合同履约审核' },
+  { id: 'inventory-check', name: '库存周转率诊断' },
+  { id: 'supplier-eval', name: '供应商交付能力评估' },
+]
+
 function generateTasks(count: number): TodoTask[] {
   const tasks: TodoTask[] = []
   const contractIds = mockOrders.slice(0, 20).map((o) => o.contractNumber)
@@ -118,17 +129,6 @@ const analysisTitles = [
   '集团贸易到货确认', 'Q1全量履约数据导出', '精密制造HT20250010催货方案', '合同履约率趋势分析',
   '物料短缺预警分析', 'FAT计划排程优化', '供应商交付能力评估', '客户满意度归因分析',
   '库存周转率诊断', '运输成本结构分析', '质量问题根因分析',
-]
-
-const skillOptions = [
-  { id: 'order-fulfillment', name: '订单履约分析' },
-  { id: 'material-kit-check', name: '物料预缺与齐套分析' },
-  { id: 'fat-planning', name: 'FAT计划排程' },
-  { id: 'shipment-tracking', name: '发货进度跟踪' },
-  { id: 'quality-diagnosis', name: '质量异常诊断' },
-  { id: 'contract-review', name: '合同履约审核' },
-  { id: 'inventory-check', name: '库存周转率诊断' },
-  { id: 'supplier-eval', name: '供应商交付能力评估' },
 ]
 
 const analysisAgents = ['系统Agent', '运营Agent', '仓储Agent', '风控Agent', '产品型销售订单确认收入智能体', '工程项目订单履约专家', '物料预缺与齐套分析专家', 'FAT计划助手']
