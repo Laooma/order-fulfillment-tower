@@ -6,6 +6,7 @@ export interface AuthUser {
   username: string
   displayName: string
   orgId: string
+  adoptedPetId: string
   roles: string[]
   permissions: {
     menus: string[]

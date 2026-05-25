@@ -39,6 +39,13 @@ function runMigrations(d: Database.Database) {
       d.exec(`ALTER TABLE analysis_tasks ADD COLUMN a2ui_data TEXT DEFAULT ''`)
     }
   }
+  // Add adopted_pet_id column to users
+  {
+    const exists = d.prepare(`SELECT name FROM pragma_table_info('users') WHERE name = 'adopted_pet_id'`).get()
+    if (!exists) {
+      d.exec(`ALTER TABLE users ADD COLUMN adopted_pet_id TEXT DEFAULT ''`)
+    }
+  }
 }
 
 function seedBizData(d: Database.Database) {

@@ -1,0 +1,21 @@
+{
+  "id": "tux",
+  "displayName": "Tux",
+  "description": "A tiny pixel-adjacent Linux mascot penguin for calm coding sessions.",
+  "spritesheetPath": "spritesheet.webp",
+  "author": "seymour",
+  "tags": [],
+  "source": "codex-pet-share",
+  "sourceUrl": "https://codex-pet-share.pages.dev/#/pets/tux",
+  "frameCounts": [
+    6,
+    8,
+    8,
+    4,
+    5,
+    8,
+    6,
+    6,
+    6
+  ]
+}

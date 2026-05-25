@@ -1,13 +1,17 @@
 import { useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { cn } from '../lib/utils'
 import { api, type Skill } from '../lib/api'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { getSkillIcon } from '../lib/skillIcons'
 import { useChatStore } from '../stores/chatStore'
 import { useAuthStore } from '../stores/authStore'
+import { useA2uiStore } from '../stores/a2uiStore'
 import TodoWidget from './TodoWidget'
 import MarkdownRenderer from './MarkdownRenderer'
+import { usePetStore } from '../stores/petStore'
+import PetRenderer from './PetRenderer'
+import PetSelector from './PetSelector'
 import type { TodoItem } from '../hooks/useWebSocket'
 
 interface ModelInfo {
@@ -107,6 +111,17 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const detailSlot = useChatStore((s) => s.detailSlot)
   const setSendMessage = useChatStore((s) => s.setSendMessage)
   const setIsRunning = useChatStore((s) => s.setIsRunning)
+
+  // Pet store
+  const petAdoptedId = usePetStore((s) => s.adoptedId)
+  const petPets = usePetStore((s) => s.pets)
+  const petLoadPets = usePetStore((s) => s.loadPets)
+  const adoptedPet = petPets.find((p) => p.id === petAdoptedId) || null
+  const [showPetSelector, setShowPetSelector] = useState(false)
+
+  useEffect(() => {
+    petLoadPets()
+  }, [petLoadPets])
   const lockAgent = pageConfig?.lockAgent ?? false
   const tabs = pageConfig?.tabs
   const activeTab = pageConfig?.activeTab ?? 'chat'
@@ -120,6 +135,8 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const onClearCabinets = pageConfig?.onClearCabinets
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID())
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const a2uiStore = useA2uiStore()
 
   const WS_URL = (import.meta.env.VITE_AGENT_BASE_URL || 'http://localhost:3002').replace(/^http/, 'ws') + '/ws/agent'
   const { messages: wsMessages, send: wsSend } = useWebSocket(WS_URL)
@@ -357,11 +374,11 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         needsNewMessageRef.current = true
       }
       if (msg.type === 'a2ui_surface' && msg.messages) {
-        if (msg.taskId && pageConfig?.page !== 'analysis') {
-          // Navigate to analysis task page — A2UI data was persisted to backend
-          onAnalysisNavigate?.(`/analysis/${msg.taskId}`)
+        if (onA2uiSurface) {
+          onA2uiSurface({ title: msg.title || 'AI分析结果', messages: msg.messages })
         } else {
-          onA2uiSurface?.({ title: msg.title || 'AI分析结果', messages: msg.messages })
+          a2uiStore.setSurface(msg.title || 'AI分析结果', msg.messages as any[])
+          navigate('/a2ui')
         }
       }
       if (msg.type === 'error') {
@@ -550,6 +567,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       orders: orderIds,
       cabinetPackages: cabinetPackageIds,
       images,
+      currentPage: pageConfig?.page || 'unknown',
     })
   }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, onClearCabinets, sessionId, quotedMessage, attachedImages, contextTaskId])
 
@@ -715,6 +733,16 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
             <circle cx="7" cy="7" r="5.5"/><path d="M7 4v3.5L9 9"/>
           </svg>
         </button>
+        <button
+          className={cn('pet-btn', adoptedPet && 'has-pet')}
+          title={adoptedPet ? `已领养 ${adoptedPet.displayName} — 点击更换` : '领养桌面宠物'}
+          onClick={() => setShowPetSelector(true)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2a4 4 0 014 4c0 2-2 3-4 6-2-3-4-4-4-6a4 4 0 014-4z"/>
+            <path d="M20 17c0-3-4-5-8-5s-8 2-8 5"/>
+          </svg>
+        </button>
         {showHistory && (
           <div className="history-dropdown">
             <div className="history-dropdown-header">历史对话</div>
@@ -806,7 +834,10 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
           </div>
         ) : messages.length === 0 ? (
           <div className="chat-empty">
-            <div className="chat-empty-img">
+            <div className={cn('chat-empty-img', adoptedPet && 'pet-adopted')}>
+              {adoptedPet ? (
+                <PetRenderer spritesheetPath={adoptedPet.spritesheetPath} size={48} cycleAll rowFrameCounts={adoptedPet.frameCounts} />
+              ) : (
               <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ width: 48, height: 48 }}>
                 <rect x="8" y="12" width="48" height="36" rx="6" stroke="currentColor" strokeWidth="1.5" opacity="0.25" />
                 <path d="M20 24h24M20 32h16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.25" />
@@ -814,10 +845,20 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                 <path d="M44 42h8M48 38v8" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
                 <path d="M28 48l-6 6v-6H8a2 2 0 01-2-2V8a2 2 0 012-2h48a2 2 0 012 2v24" stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.12" />
               </svg>
+              )}
             </div>
-            <div className="chat-empty-label">别来无恙！</div>
+            {!adoptedPet && (
+              <button className="chat-empty-adopt-btn" onClick={() => setShowPetSelector(true)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a4 4 0 014 4c0 2-2 3-4 6-2-3-4-4-4-6a4 4 0 014-4z"/>
+                  <path d="M20 17c0-3-4-5-8-5s-8 2-8 5"/>
+                </svg>
+                点击领养宠物
+              </button>
+            )}
+            <div className="chat-empty-label">{adoptedPet ? `别来无恙，${adoptedPet.displayName} 无所不能！` : '别来无恙！'}</div>
             <div className="chat-empty-sub">
-              选择订单加入对话，<br />或直接向助手提问。
+              选择单据加入对话，<br />或直接向助手提问。
             </div>
           </div>
         ) : (
@@ -850,7 +891,9 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
               return (
               <div key={i} className={cn('chat-msg-row', msg.role)}>
                 <div className={cn('chat-msg-avatar', msg.role)}>
-                  {msg.role === 'user' ? '我' : (() => { const Icon = getSkillIcon(activeAgent?.icon || 'bot'); return <Icon size={13} strokeWidth={2.5} />; })()}
+                  {msg.role === 'user' ? '我' : adoptedPet ? (
+                    <PetRenderer spritesheetPath={adoptedPet.spritesheetPath} size={16} animate={isSending} cycleAll rowFrameCounts={adoptedPet.frameCounts} />
+                  ) : (() => { const Icon = getSkillIcon(activeAgent?.icon || 'bot'); return <Icon size={13} strokeWidth={2.5} />; })()}
                 </div>
                 <div className="chat-msg-body">
                   <div className="chat-msg-name">
@@ -941,7 +984,9 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
             {streamStatus !== 'idle' && streamStatus !== 'responding' && (
               <div className="chat-msg-row assistant" style={{ opacity: 0.7 }}>
                 <div className={cn('chat-msg-avatar', 'assistant')}>
-                  {(() => { const Icon = getSkillIcon(activeAgent?.icon || 'bot'); return <Icon size={13} strokeWidth={2.5} />; })()}
+                  {adoptedPet ? (
+                    <PetRenderer spritesheetPath={adoptedPet.spritesheetPath} size={16} animate={isSending} cycleAll rowFrameCounts={adoptedPet.frameCounts} />
+                  ) : (() => { const Icon = getSkillIcon(activeAgent?.icon || 'bot'); return <Icon size={13} strokeWidth={2.5} />; })()}
                 </div>
                 <div className="chat-msg-body">
                   <div className="chat-msg-name">{activeAgent?.name || 'AI 助手'}</div>
@@ -965,17 +1010,12 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                   <span>分析任务已生成</span>
                 </div>
                 <div className="analysis-confirm-id">{pendingAnalysis.id}</div>
-                <div className="analysis-confirm-desc">AI 已完成订单履约分析，识别出相关卡点与风险。</div>
+                <div className="analysis-confirm-desc">AI 已完成订单履约分析，识别出相关卡点与风险。可在「历史分析」页面查看详情。</div>
                 <button
                   className="analysis-confirm-btn"
-                  onClick={() => {
-                    if (onAnalysisNavigate && pendingAnalysis) {
-                      onAnalysisNavigate(pendingAnalysis.redirect)
-                    }
-                    setPendingAnalysis(null)
-                  }}
+                  onClick={() => setPendingAnalysis(null)}
                 >
-                  查看分析结果
+                  知道了
                 </button>
               </div>
             )}
@@ -1470,9 +1510,11 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
 
   return (
     <>
+      <PetSelector open={showPetSelector} onClose={() => setShowPetSelector(false)} />
+
       {/* Resize Handle */}
       {!collapsed && (
-        <div className="panel-resize-handle" onMouseDown={handleResizeStart} title="拖动调整面板宽度" />
+        <div className="panel-resize-handle" onMouseDown={handleResizeStart} onDoubleClick={() => setRightPanelWidth(Math.round(window.innerWidth * 0.25))} title="拖动调整面板宽度，双击恢复默认" />
       )}
 
       {/* Right Panel */}

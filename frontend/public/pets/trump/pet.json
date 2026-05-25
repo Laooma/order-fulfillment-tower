@@ -1,0 +1,21 @@
+{
+  "id": "trump",
+  "displayName": "Trump",
+  "description": "A small smooth-edged digital pet caricature inspired by Donald Trump.",
+  "spritesheetPath": "spritesheet.webp",
+  "author": "claumarin",
+  "tags": [],
+  "source": "codex-pet-share",
+  "sourceUrl": "https://codex-pet-share.pages.dev/#/pets/trump",
+  "frameCounts": [
+    6,
+    8,
+    8,
+    4,
+    5,
+    8,
+    6,
+    6,
+    6
+  ]
+}

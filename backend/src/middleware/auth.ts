@@ -23,6 +23,7 @@ export interface CurrentUser {
   username: string
   displayName: string
   orgId: string
+  adoptedPetId: string
   roles: string[]
   permissions: {
     menus: Set<string>
@@ -110,6 +111,7 @@ export function loadCurrentUser(userId: string): CurrentUser {
       username: 'anonymous',
       displayName: '匿名用户',
       orgId: '',
+      adoptedPetId: '',
       roles: [],
       permissions: { menus: new Set(), operations: new Set(), dataScopes: {}, skills: new Set() },
     }
@@ -127,6 +129,7 @@ export function loadCurrentUser(userId: string): CurrentUser {
       username: user.username,
       displayName: user.display_name,
       orgId: user.org_id || '',
+      adoptedPetId: user.adopted_pet_id || '',
       roles: [],
       permissions: { menus: new Set(), operations: new Set(), dataScopes: {}, skills: new Set() },
     }
@@ -168,6 +171,7 @@ export function loadCurrentUser(userId: string): CurrentUser {
     username: user.username,
     displayName: user.display_name,
     orgId: user.org_id || '',
+    adoptedPetId: user.adopted_pet_id || '',
     roles: roleIds,
     permissions: { menus, operations, dataScopes, skills },
   }

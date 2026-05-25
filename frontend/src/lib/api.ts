@@ -109,7 +109,7 @@ export interface CronTask {
   enabled: boolean
   schedule: string
   script: string
-  scriptType: 'bash' | 'python' | 'js'
+  scriptType: 'bash' | 'python' | 'js' | 'none'
   callAgent: boolean
   agentSkillId?: string
   agentPrompt?: string
@@ -135,6 +135,7 @@ export const api = {
       }),
     me: () => request<any>('/auth/me'),
     logout: () => request<any>('/auth/logout', { method: 'POST' }),
+    updatePet: (adoptedPetId: string) => request<{ success: boolean }>('/auth/pet', { method: 'PUT', body: JSON.stringify({ adoptedPetId }) }),
   },
   orders: {
     list: (params?: Record<string, string>) =>
@@ -213,7 +214,7 @@ export const api = {
     saveModelsConfig: (config: any) => agentRequest<{ success: boolean }>('/models/config', { method: 'PUT', body: JSON.stringify(config) }),
     cronTasks: () => agentRequest<{ tasks: CronTask[] }>('/cron-tasks'),
     cronTask: (id: string) => agentRequest<{ task: CronTask }>(`/cron-tasks/${id}`),
-    createCronTask: (data: { id: string; name: string; description?: string; schedule?: string; script?: string; scriptType?: 'bash' | 'python' | 'js'; callAgent?: boolean; agentSkillId?: string; agentPrompt?: string }) =>
+    createCronTask: (data: { id: string; name: string; description?: string; schedule?: string; script?: string; scriptType?: 'bash' | 'python' | 'js' | 'none'; callAgent?: boolean; agentSkillId?: string; agentPrompt?: string }) =>
       agentRequest<{ success: boolean }>('/cron-tasks', { method: 'POST', body: JSON.stringify(data) }),
     updateCronTask: (id: string, data: Partial<CronTask>) =>
       agentRequest<{ success: boolean }>(`/cron-tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

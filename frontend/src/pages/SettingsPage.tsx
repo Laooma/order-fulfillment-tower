@@ -2613,7 +2613,7 @@ function CronTaskPanel() {
   const [fixedHour, setFixedHour] = useState(8)
   const [fixedMinute, setFixedMinute] = useState(0)
   const [formScript, setFormScript] = useState('')
-  const [formScriptType, setFormScriptType] = useState<'bash' | 'python' | 'js'>('bash')
+  const [formScriptType, setFormScriptType] = useState<'bash' | 'python' | 'js' | 'none'>('none')
   const [formCallAgent, setFormCallAgent] = useState(false)
   const [formAgentSkillId, setFormAgentSkillId] = useState('')
   const [formAgentPrompt, setFormAgentPrompt] = useState('')
@@ -2958,6 +2958,7 @@ function CronTaskPanel() {
                 <div className="settings-form-group" style={{ flex: 1 }}>
                   <label className="settings-form-label">脚本类型</label>
                   <select className="settings-form-input" value={formScriptType} onChange={(e) => handleFormChange(setFormScriptType, e.target.value as any)}>
+                    <option value="none">无需脚本</option>
                     <option value="bash">Bash / Shell</option>
                     <option value="python">Python</option>
                     <option value="js">JavaScript (Node)</option>
@@ -3016,15 +3017,17 @@ function CronTaskPanel() {
               )}
 
               {/* Script editor */}
-              <div className="settings-form-group" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <label className="settings-form-label">脚本内容</label>
-                <ScriptEditor
-                  value={formScript}
-                  onChange={(v) => handleFormChange(setFormScript, v)}
-                  language={formScriptType}
-                  minHeight="400px"
-                />
-              </div>
+              {formScriptType !== 'none' && (
+                <div className="settings-form-group" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                  <label className="settings-form-label">脚本内容</label>
+                  <ScriptEditor
+                    value={formScript}
+                    onChange={(v) => handleFormChange(setFormScript, v)}
+                    language={formScriptType}
+                    minHeight="400px"
+                  />
+                </div>
+              )}
             </div>
           </>
         ) : (

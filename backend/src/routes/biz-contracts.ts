@@ -88,6 +88,55 @@ router.get('/packages/:id/kit-check', (req, res) => {
 
 // ═══ Material routes (must be before /:id to avoid shadowing) ═══
 
+// GET /api/biz-contracts/materials/search?code=DLQ-001 — search material stock across all contracts
+router.get('/materials/search', (req, res) => {
+  try {
+    const db = getDb()
+    const code = req.query.code as string
+    if (!code) { res.status(400).json({ error: 'code query param is required' }); return }
+
+    const materials = db.prepare(`
+      SELECT bm.*, bp.package_name, bp.package_code, bp.planned_production, bp.status as pkg_status,
+             bd.device_name, bd.device_code, bc.id as contract_id, bc.contract_no, bc.customer, bc.amount, bc.priority
+      FROM biz_materials bm
+      JOIN biz_packages bp ON bm.package_id = bp.id
+      JOIN biz_devices bd ON bp.device_id = bd.id
+      JOIN biz_contracts bc ON bd.contract_id = bc.id
+      WHERE bm.material_code = ?
+      ORDER BY bc.priority DESC, bm.current_stock DESC
+    `).all(code) as any[]
+
+    const summary = {
+      materialCode: code,
+      totalContracts: materials.length,
+      totalAvailableStock: materials.reduce((s: number, m: any) => s + m.current_stock, 0),
+      totalInTransit: materials.reduce((s: number, m: any) => s + m.in_transit, 0),
+      contracts: materials.map((m: any) => ({
+        contractId: m.contract_id,
+        contractNo: m.contract_no,
+        customer: m.customer,
+        amount: m.amount,
+        priority: m.priority,
+        currentStock: m.current_stock,
+        inTransit: m.in_transit,
+        requiredQty: m.required_qty,
+        shortageQty: m.shortage_qty,
+        surplus: m.current_stock + m.in_transit - m.required_qty,
+        supplier: m.supplier,
+        kitStatus: m.kit_status,
+        packageName: m.package_name,
+        deviceName: m.device_name,
+        plannedProduction: m.planned_production,
+      })),
+    }
+
+    res.json(summary)
+  } catch (err) {
+    console.error('[BizMaterials] Search error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
 // GET /api/biz-contracts/materials/:id
 router.get('/materials/:id', (req, res) => {
   try {

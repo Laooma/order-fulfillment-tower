@@ -239,6 +239,35 @@ async function handleFetchBizData(args: Record<string, unknown>): Promise<string
   }
 }
 
+const SEARCH_MATERIAL_STOCK_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'search_material_stock',
+    description: '按物料编码搜索所有合同中的库存分布情况，用于判断可调拨来源。返回每个合同的可用库存、在途量、优先级、富余量(surplus=库存+在途-需求)等信息。',
+    parameters: {
+      type: 'object',
+      properties: {
+        materialCode: { type: 'string', description: '物料编码，如 DLQ-001' },
+      },
+      required: ['materialCode'],
+    },
+  },
+}
+
+async function handleSearchMaterialStock(args: Record<string, unknown>): Promise<string> {
+  const materialCode = args.materialCode as string
+  if (!materialCode) return 'Error: materialCode is required'
+  try {
+    const BACKEND_API = process.env.BACKEND_API_URL || 'http://localhost:3001/api'
+    const response = await fetch(`${BACKEND_API}/biz-contracts/materials/search?code=${encodeURIComponent(materialCode)}`)
+    if (!response.ok) return `Error: HTTP ${response.status}`
+    const data = await response.json()
+    return JSON.stringify(data, null, 2)
+  } catch (err: any) {
+    return `Error: ${err.message}`
+  }
+}
+
 const GET_PENDING_TODOS_TOOL = {
   type: 'function' as const,
   function: {
@@ -376,7 +405,7 @@ const SHOW_ANALYSIS_RESULT_TOOL = {
         },
         taskId: {
           type: 'string',
-          description: '关联的分析任务 ID（由 create_analysis_task 返回）。传入后 A2UI 数据会持久化到该任务，用户下次打开分析任务页面时仍可查看。强烈建议传入此参数。',
+          description: '可选。如果当前对话上下文已有分析任务ID，可传入以便持久化A2UI数据。如无现成的任务ID则留空。',
         },
       },
       required: ['title', 'a2uiMessages'],
@@ -679,14 +708,14 @@ function handleShowAnalysisResult(args: Record<string, unknown>, sessionId: stri
     }).catch(err => console.error('[AgentLoop] Failed to save A2UI data:', err))
   }
 
-  return `分析结果页面"${title}"已生成并展示在"AI分析结果"标签页中。用户可在页面顶部切换到此标签页查看可视化分析内容。`
+  return `A2UI可视化分析结果"${title}"已生成并展示在界面中。`
 }
 
 const CREATE_ANALYSIS_TASK_TOOL = {
   type: 'function' as const,
   function: {
     name: 'create_analysis_task',
-    description: '创建分析任务记录，将分析结果持久化保存到数据库。调用后会生成任务ID并跳转到分析任务页面，用户可在「看板分析」tab中查看结构化数据。如需生成A2UI可视化图表，应先用此工具创建任务获取taskId，再调用 show_analysis_result。',
+    description: '创建分析任务记录，将分析结果持久化保存到数据库。调用后会生成任务ID并跳转到分析任务页面，用户可在「看板分析」tab中查看结构化数据。A2UI可视化图表请直接调用 show_analysis_result。',
     parameters: {
       type: 'object',
       properties: {
@@ -704,9 +733,16 @@ async function handleCreateAnalysisTask(
   sessionId: string,
   skillName: string,
   orders: string[],
+  currentPage?: string,
   sessionMessages?: Array<{ role: string; content: string }>,
   contextTaskId?: string,
 ): Promise<{ text: string; taskId?: string }> {
+  // Hard-code guard: only allow analysis task creation from the homepage
+  if (currentPage && currentPage !== 'home') {
+    return {
+      text: `当前页面为${currentPage === 'analysis' ? '分析任务详情页' : currentPage === 'task' ? '执行任务详情页' : '其他页面'}，根据系统规则，仅首页支持创建新的分析任务。请返回首页后再提交分析任务创建请求。此操作已被系统拦截。`,
+    }
+  }
   const title = String(args.title || `${skillName} — 履约分析`)
   const result = args.result as Record<string, unknown> | undefined
   const a2uiMessages = args.a2uiMessages
@@ -826,6 +862,53 @@ async function handleCreateAnalysisTask(
     text: `分析任务已创建（ID: ${task.id}），用户可在历史分析页面查看。如果用户需要生成待办清单，请等待用户在界面点击「生成待办清单」按钮（会发送特定格式消息），收到该消息后再调用 generate_todos。`,
     taskId: task.id,
   }
+}
+
+const UPDATE_ANALYSIS_TASK_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'update_analysis_task',
+    description: '更新已有分析任务的结构化数据。当用户在分析任务详情页（currentPage === "analysis"）与agent对话，发现分析结果中有识别错误或需要修正的问题时，调用此工具更新分析任务的 orders/problemCategories/deliveryTables 等数据。此工具不会创建新任务，只会覆盖现有任务的 result 字段。',
+    parameters: {
+      type: 'object',
+      properties: {
+        result: { type: 'object', description: '更新后的分析结果JSON，必须包含 orders 数组。每个order需包含：contractNumber(订单编号)、customer(客户)、amount(金额万元)、shipmentRatio(发货率数字)、status(状态)、statusClass(blue/green/orange)、sales(销售员)、region(区域)、orderDate(下单日期)、problemCategories(问题分类数组)、deliveryTables(交付表格数组)。' },
+      },
+      required: ['result'],
+    },
+  },
+}
+
+async function handleUpdateAnalysisTask(
+  args: Record<string, unknown>,
+  ws: WebSocket,
+  sessionId: string,
+  skillName: string,
+  contextTaskId?: string,
+): Promise<{ text: string }> {
+  if (!contextTaskId) {
+    return { text: '当前对话未关联分析任务，无法执行更新操作。请先创建分析任务。' }
+  }
+
+  const result = args.result as Record<string, unknown> | undefined
+  if (!result || !hasOrdersInResult(result)) {
+    return { text: '更新失败：result 参数必须包含 orders 数组。' }
+  }
+
+  const jsonToSave = JSON.stringify(result)
+  const saved = await saveStructuredResult(contextTaskId, jsonToSave)
+  if (!saved) {
+    return { text: `更新分析任务（ID: ${contextTaskId}）失败，请稍后重试。` }
+  }
+
+  send(ws, {
+    type: 'analysis_updated',
+    sessionId,
+    analysisId: contextTaskId,
+    analysisTitle: String(args.title || skillName),
+  })
+
+  return { text: `分析任务（ID: ${contextTaskId}）已更新。修正后的数据已保存，用户可在看板分析tab中查看更新后的内容。` }
 }
 
 const GENERATE_TODOS_TOOL = {
@@ -1289,7 +1372,7 @@ export async function handleAgentMessage(
   msg: AgentMessage,
   mcp: McpPool
 ): Promise<void> {
-  const { sessionId, message, orders, cabinetPackages, autoAssign, taskId } = msg
+  const { sessionId, message, orders, cabinetPackages, autoAssign, taskId, currentPage } = msg
   if (!sessionId || !message) return
 
   // Abort any previous LLM call for this session and serialize processing
@@ -1362,7 +1445,7 @@ export async function handleAgentMessage(
   // Send initial status
   send(ws, { type: 'status', sessionId, status: 'thinking', skillName: skill.name, skillIcon: skill.icon, skillColor: skill.color, modelId })
 
-  const systemPrompt = buildSystemPrompt(skill, orders)
+  const systemPrompt = buildSystemPrompt(skill, orders, currentPage)
   const session = getOrCreateSession(sessionId, skill.id, systemPrompt)
   const sessionKey = `${sessionId}:${skill.id}`
 
@@ -1400,7 +1483,7 @@ export async function handleAgentMessage(
   // Determine whether to enable A2UI visualization
   const enableA2ui = shouldEnableA2ui(message, skill)
 
-  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'get_pending_todos', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'fetch_biz_data'])
+  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'get_pending_todos', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'update_analysis_task', 'fetch_biz_data', 'search_material_stock'])
     // Normalize function name for comparison (strip underscores, lowercase) to match built-in names
     const BUILTIN_NORMALIZED = new Set(Array.from(BUILTIN_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
     const MCP_TOOLS_RAW = mcp.getTools().map((t) => ({
@@ -1421,6 +1504,7 @@ export async function handleAgentMessage(
       SEND_NOTIFICATION_TOOL,
       LIST_NOTIFICATION_CHANNELS_TOOL,
       FETCH_BIZ_DATA_TOOL,
+      SEARCH_MATERIAL_STOCK_TOOL,
       GET_PENDING_TODOS_TOOL,
       CREATE_ANALYSIS_TASK_TOOL,
       GENERATE_TODOS_TOOL,
@@ -1625,10 +1709,27 @@ export async function handleAgentMessage(
 
           // Handle built-in create_analysis_task tool
           if (normalizedName === 'createanalysistask') {
-            const result = await handleCreateAnalysisTask(toolArgs, ws, sessionId, skill.name, orders || [], session.messages, contextTaskId)
+            const result = await handleCreateAnalysisTask(toolArgs, ws, sessionId, skill.name, orders || [], currentPage, session.messages, contextTaskId)
             if (result.taskId) {
               analysisId = result.taskId
             }
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: result.text,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: result.text.slice(0, 200),
+            })
+            continue
+          }
+
+          // Handle built-in update_analysis_task tool
+          if (normalizedName === 'updateanalysistask') {
+            const result = await handleUpdateAnalysisTask(toolArgs, ws, sessionId, skill.name, contextTaskId)
             pushMessage(sessionKey, session, {
               role: 'tool',
               content: result.text,
@@ -1663,6 +1764,23 @@ export async function handleAgentMessage(
           // Handle built-in list_notification_channels tool
           if (normalizedName === 'listnotificationchannels') {
             const resultText = await handleListNotificationChannels()
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: resultText.slice(0, 200),
+            })
+            continue
+          }
+
+          // Handle built-in search_material_stock tool
+          if (normalizedName === 'searchmaterialstock') {
+            const resultText = await handleSearchMaterialStock(toolArgs)
             pushMessage(sessionKey, session, {
               role: 'tool',
               content: resultText,
@@ -2133,6 +2251,7 @@ function getToolLabel(name: string, args: Record<string, unknown>): string {
     case 'save_hook': return `保存 Hook: ${String(args.name || args.hookId || '')}`
     case 'show_analysis_result': return `生成分析页面: ${String(args.title || '')}`
     case 'create_analysis_task': return `创建分析任务: ${String(args.title || '')}`
+    case 'update_analysis_task': return `更新分析任务数据`
     case 'generate_todos': return `生成待办清单: ${String(args.taskId || '')}`
     case 'send_notification': return `发送通知: ${String(args.channelId || '')}`
     case 'list_notification_channels': return `获取通知渠道列表`
@@ -2154,11 +2273,13 @@ export async function handleAgentHttpRequest(skillId: string, prompt: string): P
     throw new Error(`Model not found: ${modelId}`)
   }
 
-  const systemPrompt = buildSystemPrompt(skill, undefined)
+  const systemPrompt = buildSystemPrompt(skill, undefined, 'cron')
   const tools = [
     SEND_NOTIFICATION_TOOL,
     LIST_NOTIFICATION_CHANNELS_TOOL,
     GET_PENDING_TODOS_TOOL,
+    FETCH_BIZ_DATA_TOOL,
+    SEARCH_MATERIAL_STOCK_TOOL,
   ]
 
   const messages: Array<{ role: string; content: string; toolCalls?: any; tool_call_id?: string }> = [
@@ -2221,6 +2342,10 @@ export async function handleAgentHttpRequest(skillId: string, prompt: string): P
         toolResult = await handleListNotificationChannels()
       } else if (normalizedName === 'getpendingtodos') {
         toolResult = await handleGetPendingTodos(toolArgs)
+      } else if (normalizedName === 'fetchbizdata') {
+        toolResult = await handleFetchBizData(toolArgs)
+      } else if (normalizedName === 'searchmaterialstock') {
+        toolResult = await handleSearchMaterialStock(toolArgs)
       } else {
         toolResult = `Unknown tool: ${toolName}`
       }
@@ -2242,9 +2367,14 @@ function send(ws: WebSocket, payload: Record<string, unknown>) {
   }
 }
 
-function buildSystemPrompt(skill: Skill, orders?: string[]): string {
+function buildSystemPrompt(skill: Skill, orders?: string[], currentPage?: string): string {
   let prompt = `你是「${skill.name}」。\n\n${skill.prompt}\n\n`
   prompt += `当前时间: ${new Date().toLocaleString('zh-CN')}\n`
+  prompt += `当前页面: ${currentPage || '未知'}\n`
+  prompt += `\n## 页面感知规则（严格遵守）\n`
+  prompt += `- 只有当前页面为"home"（首页）时，才能调用 create_analysis_task 创建新的分析任务。\n`
+  prompt += `- 在"analysis"（分析任务详情页）或其他页面时，对话围绕当前页面的数据展开，禁止创建新的分析任务。\n`
+  prompt += `- 如果是定时任务触发（currentPage === 'cron'），按定时任务自身的规则执行。\n\n`
   prompt += `你可以使用以下工具来完成任务:\n`
   prompt += `- Skill: 加载其他 skill 定义\n`
   prompt += `- read_file: 读取文件内容\n`
@@ -2252,11 +2382,13 @@ function buildSystemPrompt(skill: Skill, orders?: string[]): string {
   prompt += `- save_skill: 将新创建的 Skill 保存到文件系统（skillId、name、description、icon、color、prompt 六个必填参数，可选的 references 数组和 scripts 数组用于创建参考文档和脚本文件）\n`
   prompt += `- save_hook: 将新创建的 Hook 保存到文件系统（hookId、name、description、event、script 五个必填参数，enabled 和 matcher 可选）\n`
   prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）、taskId（可选，关联的分析任务ID）\n`
-  prompt += `- create_analysis_task: 完成分析后必须调用，将结构化结果持久化到数据库。参数：title（任务标题）、result（包含 orders 数组的JSON对象，每个order含 contractNumber/customer/amount/shipmentRatio/status/statusClass/sales/region/orderDate/problemCategories/deliveryTables 等字段）。调用后返回 taskId，可用于后续 show_analysis_result。\n`
+  prompt += `- create_analysis_task: 【仅限首页调用】只有当用户当前位于首页（currentPage === 'home'）时才能调用此工具。在分析任务详情页或其他页面时，禁止创建新的分析任务。参数：title（任务标题）、result（包含 orders 数组的JSON对象，每个order含 contractNumber/customer/amount/shipmentRatio/status/statusClass/sales/region/orderDate/problemCategories/deliveryTables 等字段）。\n`
+  prompt += `- update_analysis_task: 更新已有分析任务的结构化数据。当用户在分析任务详情页（currentPage === 'analysis'）指出分析有误或需要修正时调用。参数：result（修正后的完整分析结果JSON，包含 orders 数组）。此工具覆盖现有数据，不会创建新任务。\n`
   prompt += `- generate_todos: 当用户消息以"请为以下合同生成待办清单"开头时（这是用户点击了界面按钮），必须调用此工具。其他场景仅在用户直接要求"生成待办清单"、"创建执行任务"时才调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办\n`
   prompt += `- list_notification_channels: 列出所有已配置的通知渠道（飞书机器人、邮件、企微等）。在发送通知前先调用此工具确认可用的渠道。\n`
   prompt += `- send_notification: 通过通知渠道发送消息。参数：channelId（渠道ID，从 list_notification_channels 获取）、subject（标题，用于邮件）、message（消息正文，支持 Markdown 格式，飞书和企微机器人会渲染 Markdown）。\n`
   prompt += `- fetch_biz_data: 查询业务合同/装置/包/物料的层级数据。参数：contractId（合同ID）或 packageId（包ID）。\n`
+  prompt += `- search_material_stock: 按物料编码搜索所有合同中的库存分布。参数：materialCode（物料编码如DLQ-001）。返回每个合同的库存、在途、优先级、富余量(surplus)，用于判断调拨可行性。\n`
   prompt += `- get_pending_todos: 获取所有未完成的待办任务清单（含分析任务生成的待办和执行任务中的未完结待办）。按负责人分组，包含任务类别、描述、优先级、截止日期。可选参数 assignee 按人筛选。\n\n`
 
   // Add references and scripts info

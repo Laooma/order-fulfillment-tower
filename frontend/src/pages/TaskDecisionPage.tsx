@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import TaskDetailLayout from '../components/TaskDetailLayout'
 import { api } from '../lib/api'
+import { useChatStore } from '../stores/chatStore'
+import { useA2uiStore } from '../stores/a2uiStore'
 
 const options = [
   {
@@ -45,6 +47,24 @@ export default function TaskDecisionPage() {
       .then((data) => setTaskData(data))
       .catch(() => { /* use defaults */ })
   }, [id])
+
+  const setPageConfig = useChatStore((s) => s.setPageConfig)
+  const navigate = useNavigate()
+  const a2uiStore = useA2uiStore()
+
+  useEffect(() => {
+    setPageConfig({
+      page: 'task',
+      taskId: id,
+      onA2uiSurface: (data: { title: string; messages: unknown[] }) => {
+        a2uiStore.setSurface(data.title, data.messages as any[])
+        navigate('/a2ui')
+      },
+    })
+    return () => {
+      setPageConfig(null)
+    }
+  }, [id, setPageConfig, navigate, a2uiStore])
 
   return (
     <TaskDetailLayout

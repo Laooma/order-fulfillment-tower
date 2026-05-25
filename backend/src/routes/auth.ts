@@ -54,6 +54,7 @@ router.post('/login', (req, res) => {
         username: fullUser.username,
         displayName: fullUser.displayName,
         orgId: fullUser.orgId,
+        adoptedPetId: fullUser.adoptedPetId,
         roles: fullUser.roles,
         permissions: {
           menus: Array.from(fullUser.permissions.menus),
@@ -82,6 +83,7 @@ router.get('/me', (req, res) => {
       username: user.username,
       displayName: user.displayName,
       orgId: user.orgId,
+      adoptedPetId: user.adoptedPetId,
       roles: user.roles,
       permissions: {
         menus: Array.from(user.permissions.menus),
@@ -99,6 +101,24 @@ router.get('/me', (req, res) => {
 // POST /api/auth/logout
 router.post('/logout', (_req, res) => {
   res.json({ success: true })
+})
+
+// PUT /api/auth/pet — update current user's adopted pet
+router.put('/pet', (req, res) => {
+  try {
+    const user = (req as any).currentUser
+    if (!user || !user.id) {
+      res.status(401).json({ error: 'Not authenticated' })
+      return
+    }
+    const { adoptedPetId } = req.body
+    const db = getDb()
+    db.prepare('UPDATE users SET adopted_pet_id = ? WHERE id = ?').run(adoptedPetId || '', user.id)
+    res.json({ success: true, adoptedPetId: adoptedPetId || '' })
+  } catch (err) {
+    console.error('[Auth] Pet update error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
 })
 
 export default router

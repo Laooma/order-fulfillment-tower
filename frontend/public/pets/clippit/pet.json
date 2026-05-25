@@ -1,0 +1,25 @@
+{
+  "id": "clippit",
+  "displayName": "Clippy",
+  "description": "A classic paperclip assistant rebuilt from Microsoft Agent animation frames. Make your own from complete assets at https://github.com/Dimava/codex-clippy.",
+  "spritesheetPath": "spritesheet.webp",
+  "author": "Dimava",
+  "tags": [
+    "retro",
+    "mascot",
+    "animated"
+  ],
+  "source": "codex-pet-share",
+  "sourceUrl": "https://codex-pet-share.pages.dev/#/pets/clippit",
+  "frameCounts": [
+    6,
+    8,
+    8,
+    4,
+    5,
+    8,
+    6,
+    6,
+    6
+  ]
+}

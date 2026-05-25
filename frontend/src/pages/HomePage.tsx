@@ -304,7 +304,7 @@ export default function HomePage() {
                 <th style={{ width: 70 }}>签收</th>
                 <th style={{ width: 80 }}>发货进度</th>
                 <th style={{ width: 70 }}>异常</th>
-                <th style={{ width: 90 }}>操作</th>
+                <th className="col-sticky-right" style={{ width: 60 }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -368,7 +368,7 @@ export default function HomePage() {
                         {r.isException ? '异常' : '正常'}
                       </span>
                     </td>
-                    <td>
+                    <td className="col-sticky-right">
                       <div className="row-actions">
                         <button
                           className={cn('icon-btn add-to-chat', selectedOrders.has(r.id) && 'added')}
@@ -533,13 +533,14 @@ export default function HomePage() {
                 <th style={{ width: 100 }}>总成完成</th>
                 <th style={{ width: 80 }}>发货状态</th>
                 <th style={{ width: 100 }}>成套厂</th>
+                <th className="col-sticky-right" style={{ width: 60 }}>操作</th>
               </tr>
             </thead>
             <tbody>
               {cabinetLoading ? (
-                <tr><td colSpan={13} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>加载中...</td></tr>
+                <tr><td colSpan={14} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>加载中...</td></tr>
               ) : cabinetPackages.length === 0 ? (
-                <tr><td colSpan={13} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>暂无数据</td></tr>
+                <tr><td colSpan={14} style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>暂无数据</td></tr>
               ) : (
                 cabinetPackages.map((c: any, i: number) => {
                   const statusLabel: Record<string, string> = {
@@ -591,6 +592,19 @@ export default function HomePage() {
                       </span>
                     </td>
                     <td>{c.factory}</td>
+                    <td className="col-sticky-right">
+                      <div className="row-actions">
+                        <button
+                          className={cn('icon-btn add-to-chat', selectedCabinets.has(c.id) && 'added')}
+                          title={selectedCabinets.has(c.id) ? '已加入（点击移除）' : '加入对话'}
+                          onClick={() => toggleCabinet(c.id)}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                            <path d="M10 2H2a1 1 0 00-1 1v6a1 1 0 001 1h1v2l3-2h4a1 1 0 001-1V3a1 1 0 00-1-1zm-4 5H4V6h2V4h1v2h2v1H7v2H6V7z" />
+                          </svg>
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                   )
                 })

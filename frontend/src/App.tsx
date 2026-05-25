@@ -12,15 +12,23 @@ import SettingsPage from './pages/SettingsPage'
 import A2uiPage from './pages/A2uiPage'
 import LoginPage from './pages/LoginPage'
 import { useAuthStore } from './stores/authStore'
+import { usePetStore } from './stores/petStore'
 
 function ProtectedLayout() {
-  const { isAuthenticated, isLoading, loadUser, token } = useAuthStore()
+  const { isAuthenticated, isLoading, loadUser, token, user } = useAuthStore()
+  const initPetFromUser = usePetStore(s => s.initFromUser)
 
   useEffect(() => {
     if (token && !isAuthenticated) {
       loadUser()
     }
   }, [])
+
+  useEffect(() => {
+    if (user) {
+      initPetFromUser(user.adoptedPetId)
+    }
+  }, [user?.adoptedPetId])
 
   if (isLoading) {
     return (
