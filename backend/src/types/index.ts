@@ -24,11 +24,14 @@ export interface TodoTask {
   priority: 'high' | 'mid' | 'low'
   priorityLabel: string
   assignee: string
+  supervisor?: string
   dueDate: string
   status: 'pending' | 'progress' | 'overdue' | 'done'
   statusLabel: string
   category: 'ship' | 'inbound' | 'contract' | 'exception'
   categoryLabel: string
+  skillId?: string
+  skillName?: string
 }
 
 export interface AnalysisTask {
@@ -42,6 +45,8 @@ export interface AnalysisTask {
   createdAt: string
   completedAt: string
   relatedContracts: string[]
+  skillId?: string
+  skillName?: string
 }
 
 export interface ChatMessage {

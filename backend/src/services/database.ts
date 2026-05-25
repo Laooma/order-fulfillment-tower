@@ -450,6 +450,12 @@ function initSchema(db: Database.Database) {
   // Migration: add supervisor column if missing
   try { db.exec('ALTER TABLE analysis_todos ADD COLUMN supervisor TEXT DEFAULT \'\'') } catch (_) { /* already exists */ }
 
+  // Migration: add skill columns
+  try { db.exec('ALTER TABLE analysis_tasks ADD COLUMN skill_id TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE analysis_tasks ADD COLUMN skill_name TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE analysis_todos ADD COLUMN skill_id TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE analysis_todos ADD COLUMN skill_name TEXT DEFAULT \'\'') } catch (_) {}
+
   // Migration: update role_permissions CHECK constraint to include 'skill'
   try {
     db.exec(`

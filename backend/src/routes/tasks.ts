@@ -90,6 +90,8 @@ function mapRow(r: any) {
     statusLabel: statusLabels[r.status] || '待开始',
     category: cat.code,
     categoryLabel: cat.label,
+    skillId: r.skill_id || '',
+    skillName: r.skill_name || '',
   }
 }
 

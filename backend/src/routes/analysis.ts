@@ -47,7 +47,7 @@ router.get('/', (req, res) => {
     }
 
     const rows = db.prepare(
-      `SELECT id, title, description, agent, initiator, status, created_at, completed_at
+      `SELECT id, title, description, agent, initiator, status, created_at, completed_at, skill_id, skill_name
        FROM analysis_tasks ${where} ${orderBy} LIMIT ? OFFSET ?`
     ).all(...params, ps, offset) as any[]
 
@@ -61,6 +61,8 @@ router.get('/', (req, res) => {
       status: r.status,
       createdAt: r.created_at,
       completedAt: r.completed_at,
+      skillId: r.skill_id || '',
+      skillName: r.skill_name || '',
       // For list compatibility, fetch related contract numbers
       relatedContracts: getRelatedContracts(db, r.id),
     }))
@@ -98,7 +100,7 @@ router.get('/:id', (req, res) => {
   try {
     const db = getDb()
     const row = db.prepare(
-      'SELECT id, title, description, agent, initiator, status, created_at, completed_at FROM analysis_tasks WHERE id = ?'
+      'SELECT id, title, description, agent, initiator, status, created_at, completed_at, skill_id, skill_name FROM analysis_tasks WHERE id = ?'
     ).get(req.params.id) as any
 
     if (!row) {
@@ -118,6 +120,8 @@ router.get('/:id', (req, res) => {
       status: row.status,
       createdAt: row.created_at,
       completedAt: row.completed_at,
+      skillId: row.skill_id || '',
+      skillName: row.skill_name || '',
       relatedContracts: getRelatedContracts(db, row.id),
     })
   } catch (err) {

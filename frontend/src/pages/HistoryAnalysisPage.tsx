@@ -15,6 +15,8 @@ interface HistoryTask {
   createdAt: string
   completedAt: string
   relatedContracts: string[]
+  skillId?: string
+  skillName?: string
 }
 
 /* ── API Data ── */
@@ -249,6 +251,7 @@ function ListView() {
               </th>
               <th style={{ width: '240px' }}>详细说明</th>
               <th style={{ width: '100px' }}>发起Agent</th>
+              <th style={{ width: '90px' }}>相关skill</th>
               <th style={{ width: '70px' }}>发起人</th>
               <th className={sortClass('status')} style={{ width: '80px' }} onClick={() => handleSort('status')}>
                 处理状态 <span className="sort-arrow">{sortArrow('status')}</span>
@@ -285,6 +288,9 @@ function ListView() {
                 <td>
                   <span className={agentIconClass(t.agent)}>{agentShort(t.agent)}</span>
                   {t.agent}
+                </td>
+                <td style={{ fontSize: '12px', color: t.skillName ? 'var(--color-fg)' : 'var(--color-muted)' }}>
+                  {t.skillName || '无skill'}
                 </td>
                 <td>{t.initiator}</td>
                 <td>

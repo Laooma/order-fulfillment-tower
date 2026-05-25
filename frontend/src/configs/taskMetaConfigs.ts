@@ -21,6 +21,7 @@ export const defaultMetaConfig: MetaPanelConfig = {
         { label: '任务编号', value: { dataKey: 'id', mono: true, fontSize: 11 } },
         { label: '关联分析', value: { dataKey: 'analysisTaskId', mono: true } },
         { label: '任务类型', value: { dataKey: 'typeLabel' } },
+        { label: '相关skill', value: { dataKey: 'skillName', static: '无skill' } },
         { label: '优先级', value: { dataKey: 'priorityLabel' } },
         { label: '状态', value: { dataKey: 'statusLabel' } },
         { label: '截止日期', value: { dataKey: 'dueDate', mono: true } },

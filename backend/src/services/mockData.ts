@@ -84,6 +84,8 @@ function generateTasks(count: number): TodoTask[] {
     const prioObj = randItem(priorities)
     const statusObj = randItem(statuses)
     const catObj = randItem(categories)
+    const useSkill = Math.random() < 0.7
+    const skill = useSkill ? randItem(skillOptions) : null
     tasks.push({
       id: `T-${2024}-${pad(randInt(1, 12))}${pad(randInt(1, 28))}-${String(i + 1).padStart(3, '0')}`,
       contractId: randItem(contractIds),
@@ -99,6 +101,8 @@ function generateTasks(count: number): TodoTask[] {
       statusLabel: statusObj.label,
       category: catObj.c,
       categoryLabel: catObj.label,
+      skillId: skill ? skill.id : '',
+      skillName: skill ? skill.name : '',
     })
   }
   return tasks
@@ -116,6 +120,17 @@ const analysisTitles = [
   '库存周转率诊断', '运输成本结构分析', '质量问题根因分析',
 ]
 
+const skillOptions = [
+  { id: 'order-fulfillment', name: '订单履约分析' },
+  { id: 'material-kit-check', name: '物料预缺与齐套分析' },
+  { id: 'fat-planning', name: 'FAT计划排程' },
+  { id: 'shipment-tracking', name: '发货进度跟踪' },
+  { id: 'quality-diagnosis', name: '质量异常诊断' },
+  { id: 'contract-review', name: '合同履约审核' },
+  { id: 'inventory-check', name: '库存周转率诊断' },
+  { id: 'supplier-eval', name: '供应商交付能力评估' },
+]
+
 const analysisAgents = ['系统Agent', '运营Agent', '仓储Agent', '风控Agent', '产品型销售订单确认收入智能体', '工程项目订单履约专家', '物料预缺与齐套分析专家', 'FAT计划助手']
 const initiators = ['王经理', '李主管', '张总监', '财务总监', '客服经理', '仓储部经理', 'Hi·金星米', '系统']
 const analysisStatuses = ['已完成', '处理中', '待处理', '审批中', '已驳回']
@@ -127,6 +142,8 @@ function generateAnalysisTasks(count: number): AnalysisTask[] {
     const created = new Date(baseDate.getTime() + randInt(0, 8) * 86400000 + randInt(0, 23) * 3600000)
     const status = randItem(analysisStatuses)
     const completed = status === '已完成' ? new Date(created.getTime() + randInt(5, 120) * 60000) : null
+    const useSkill = Math.random() < 0.7
+    const skill = useSkill ? randItem(skillOptions) : null
     tasks.push({
       id: `T20260518${String(i + 1).padStart(3, '0')}`,
       title: analysisTitles[i % analysisTitles.length] + (i >= analysisTitles.length ? ` (${i - analysisTitles.length + 2})` : ''),
@@ -138,6 +155,8 @@ function generateAnalysisTasks(count: number): AnalysisTask[] {
       createdAt: created.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '/'),
       completedAt: completed ? completed.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '/') : '',
       relatedContracts: Array.from({ length: randInt(1, 3) }, () => `SCJD2025${pad(randInt(1, 12))}${pad(randInt(1, 28))}${String(randInt(1, 999)).padStart(3, '0')}`),
+      skillId: skill ? skill.id : '',
+      skillName: skill ? skill.name : '',
     })
   }
   return tasks

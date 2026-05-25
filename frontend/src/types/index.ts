@@ -23,6 +23,8 @@ export interface AnalysisTask {
   orderCount: number
   issueCount: number
   status: TaskStatus
+  skillId?: string
+  skillName?: string
 }
 
 export interface IssueCard {
@@ -56,6 +58,8 @@ export interface TodoTask {
   statusLabel: string
   category: BusinessType
   categoryLabel: string
+  skillId?: string
+  skillName?: string
 }
 
 export interface ChatMessage {
