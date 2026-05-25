@@ -50,6 +50,7 @@ export interface TodoTask {
   priority: Priority
   priorityLabel: string
   assignee: string
+  supervisor?: string
   dueDate: string
   status: TaskStatus
   statusLabel: string

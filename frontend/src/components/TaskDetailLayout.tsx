@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom'
-import { getAnalysisTaskId } from '../lib/utils'
+import { getAnalysisTaskId, cn } from '../lib/utils'
+import type { MetaPanelConfig } from '../types/metaConfig'
+import { defaultMetaConfig } from '../configs/taskMetaConfigs'
 
 interface TaskInfo {
   id?: string
@@ -18,15 +20,20 @@ interface TaskDetailLayoutProps {
   taskId?: string
   contractId?: string
   task?: TaskInfo | null
+  metaConfig?: MetaPanelConfig
 }
 
-export default function TaskDetailLayout({ title, children, taskId, contractId, task }: TaskDetailLayoutProps) {
+export default function TaskDetailLayout({ title, children, taskId, contractId, task, metaConfig }: TaskDetailLayoutProps) {
   const navigate = useNavigate()
   const analysisTaskId = taskId ? getAnalysisTaskId(taskId) : ''
+  const config = metaConfig || defaultMetaConfig
+
+  // Merge computed fields into the task-like lookup object
+  const enriched: Record<string, any> = { ...(task || {}), analysisTaskId }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Top header bar — clean: back button + title + actions */}
+      {/* Top header bar */}
       <div className="detail-header-bar">
         <div className="detail-header-left">
           <button onClick={() => navigate('/tasks')} className="detail-back-btn">
@@ -41,122 +48,73 @@ export default function TaskDetailLayout({ title, children, taskId, contractId, 
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Meta Panel */}
+        {/* Left Meta Panel — rendered from JSON config */}
         <aside className="left-meta">
           <div className="meta-header">
-            <div className="meta-status-row">
-              <span className="meta-status danger">异常</span>
-              <span className="meta-status warn">紧急</span>
+            {config.statusBadges && config.statusBadges.length > 0 && (
+              <div className="meta-status-row">
+                {config.statusBadges.map((b, i) => (
+                  <span key={i} className={`meta-status ${b.className}`}>{b.label}</span>
+                ))}
+              </div>
+            )}
+            <div className="meta-id">
+              {config.contractIdDataKey && enriched[config.contractIdDataKey]
+                ? enriched[config.contractIdDataKey]
+                : 'SCJD20241114-K01'}
             </div>
-            <div className="meta-id">{contractId || 'SCJD20241114-K01'}</div>
-            <div className="meta-company">中国铁制股份有限公司 · 华北大区 / 安徽</div>
+            {config.companyName && (
+              <div className="meta-company">{config.companyName}</div>
+            )}
           </div>
 
-          {/* Task info section with IDs */}
-          {task && (
-            <div className="meta-section">
-              <div className="meta-section-title">任务信息</div>
-              {taskId && (
-                <div className="meta-row">
-                  <span className="meta-label">任务编号</span>
-                  <span className="meta-value mono" style={{ fontSize: 11 }}>{taskId}</span>
-                </div>
-              )}
-              {analysisTaskId && (
-                <div className="meta-row">
-                  <span className="meta-label">关联分析</span>
-                  <span className="meta-value mono">{analysisTaskId}</span>
-                </div>
-              )}
-              <div className="meta-row">
-                <span className="meta-label">任务类型</span>
-                <span className="meta-value">{task.typeLabel || '—'}</span>
-              </div>
-              <div className="meta-row">
-                <span className="meta-label">优先级</span>
-                <span className="meta-value">{task.priorityLabel || '—'}</span>
-              </div>
-              <div className="meta-row">
-                <span className="meta-label">状态</span>
-                <span className="meta-value">{task.statusLabel || '—'}</span>
-              </div>
-              <div className="meta-row">
-                <span className="meta-label">截止日期</span>
-                <span className="meta-value mono">{task.dueDate || '—'}</span>
-              </div>
-              <div className="meta-section-divider" />
-              <div className="meta-row">
-                <span className="meta-label">督办人</span>
-                <span className="meta-value" style={{ fontWeight: 600 }}>{task.supervisor || '—'}</span>
-              </div>
-              <div className="meta-row">
-                <span className="meta-label">执行人</span>
-                <span className="meta-value" style={{ fontWeight: 600 }}>{task.assignee || '—'}</span>
-              </div>
-            </div>
-          )}
+          {config.sections.map((section, si) => (
+            <div key={si} className="meta-section">
+              <div className="meta-section-title">{section.title}</div>
+              {section.rows.map((row, ri) => {
+                // Divider row
+                if (row.dividerBefore) {
+                  return <div key={ri} className="meta-section-divider" />
+                }
+                // Resolve value: dataKey first, static fallback, then '—'
+                let text = '—'
+                if (row.value.dataKey && enriched[row.value.dataKey] != null && enriched[row.value.dataKey] !== '') {
+                  text = String(enriched[row.value.dataKey])
+                } else if (row.value.static != null) {
+                  text = row.value.static
+                }
 
-          <div className="meta-section">
-            <div className="meta-section-title">基本信息</div>
-            <div className="meta-row">
-              <span className="meta-label">合同金额</span>
-              <span className="meta-value mono">1,558.00 万元</span>
-            </div>
-            <div className="meta-row">
-              <span className="meta-label">下单日期</span>
-              <span className="meta-value">2024/11/14</span>
-            </div>
-            <div className="meta-row">
-              <span className="meta-label">交货期</span>
-              <span className="meta-value">47 天</span>
-            </div>
-            <div className="meta-row">
-              <span className="meta-label">销售员</span>
-              <span className="meta-value">李明</span>
-            </div>
-            <div className="meta-row">
-              <span className="meta-label">采购员</span>
-              <span className="meta-value">王芳</span>
-            </div>
-          </div>
+                const valueClass = cn(
+                  'meta-value',
+                  row.value.mono && 'mono',
+                  row.value.bold && 'meta-value-bold',
+                )
 
-          <div className="meta-section">
-            <div className="meta-section-title">履约进度</div>
-            <div className="meta-row">
-              <span className="meta-label">发货比例</span>
-              <span className="meta-value mono">65%</span>
+                return (
+                  <div key={ri}>
+                    <div className="meta-row">
+                      <span className="meta-label">{row.label}</span>
+                      <span
+                        className={valueClass}
+                        style={{ fontSize: row.value.fontSize }}
+                        title={text}
+                      >
+                        {text}
+                      </span>
+                    </div>
+                    {row.progressValue != null && (
+                      <div className="meta-progress-bar">
+                        <div
+                          className="meta-progress-fill"
+                          style={{ width: `${row.progressValue}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
-            <div className="meta-progress-bar">
-              <div className="meta-progress-fill" style={{ width: '65%' }} />
-            </div>
-            <div className="meta-row" style={{ marginTop: '10px' }}>
-              <span className="meta-label">签收比例</span>
-              <span className="meta-value mono">32%</span>
-            </div>
-            <div className="meta-progress-bar">
-              <div className="meta-progress-fill" style={{ width: '32%' }} />
-            </div>
-          </div>
-
-          <div className="meta-section">
-            <div className="meta-section-title">产品信息</div>
-            <div className="meta-row">
-              <span className="meta-label">产品型号</span>
-              <span className="meta-value">CCU-2000</span>
-            </div>
-            <div className="meta-row">
-              <span className="meta-label">物料编号</span>
-              <span className="meta-value mono">HT001241</span>
-            </div>
-            <div className="meta-row">
-              <span className="meta-label">SKU 数量</span>
-              <span className="meta-value mono">6</span>
-            </div>
-            <div className="meta-row">
-              <span className="meta-label">发货方式</span>
-              <span className="meta-value">直发客户</span>
-            </div>
-          </div>
+          ))}
         </aside>
 
         {/* Center Content */}
