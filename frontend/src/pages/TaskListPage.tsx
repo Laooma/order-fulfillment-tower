@@ -317,7 +317,7 @@ export default function TaskListPage() {
           <div className="flex-1 overflow-y-auto overflow-x-hidden">
             <FilterGroup
               title="关联合同"
-              options={[{ value: 'all', label: '全部合同', count: 42 }, ...contracts]}
+              options={[{ value: 'all', label: '全部合同', count: allMockTasks.length }, ...contracts]}
               activeValue={filterContract}
               onChange={v => { setFilterContract(v); setCurrentPage(1) }}
               showSearch
@@ -325,25 +325,25 @@ export default function TaskListPage() {
             />
             <FilterGroup
               title="任务类型"
-              options={[{ value: 'all', label: '全部类型', count: 42 }, ...typeOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.type === o.value).length }))]}
+              options={[{ value: 'all', label: '全部类型', count: allMockTasks.length }, ...typeOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.type === o.value).length }))]}
               activeValue={filterType}
               onChange={v => { setFilterType(v as TaskType | 'all'); setCurrentPage(1) }}
             />
             <FilterGroup
               title="优先级"
-              options={[{ value: 'all', label: '全部优先级', count: 42 }, ...priorityOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.priority === o.value).length }))]}
+              options={[{ value: 'all', label: '全部优先级', count: allMockTasks.length }, ...priorityOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.priority === o.value).length }))]}
               activeValue={filterPriority}
               onChange={v => { setFilterPriority(v as Priority | 'all'); setCurrentPage(1) }}
             />
             <FilterGroup
               title="任务状态"
-              options={[{ value: 'all', label: '全部状态', count: 42 }, ...statusOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.status === o.value).length }))]}
+              options={[{ value: 'all', label: '全部状态', count: allMockTasks.length }, ...statusOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.status === o.value).length }))]}
               activeValue={filterStatus}
               onChange={v => { setFilterStatus(v as TaskStatus | 'all'); setCurrentPage(1) }}
             />
             <FilterGroup
               title="负责人"
-              options={[{ value: 'all', label: '全部人员', count: 42 }, ...assignees]}
+              options={[{ value: 'all', label: '全部人员', count: allMockTasks.length }, ...assignees]}
               activeValue={filterAssignee}
               onChange={v => { setFilterAssignee(v); setCurrentPage(1) }}
               showSearch
