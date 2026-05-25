@@ -698,11 +698,11 @@ export default function AnalysisResultPage() {
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false)
   // Split pane state
   const [splitState, setSplitState] = useState<{ left: PaneKey; right: PaneKey } | null>(null)
-  const [splitRatio, setSplitRatio] = useState(0.5)
+  const [splitRatio, setSplitRatio] = useState(2 / 3) // left:right = 2:1
   const [dragOverZone, setDragOverZone] = useState<'left' | 'right' | null>(null)
   const isResizing = useRef(false)
   const resizeStartX = useRef(0)
-  const resizeStartRatio = useRef(0.5)
+  const resizeStartRatio = useRef(2 / 3)
   const mainAreaRef = useRef<HTMLDivElement>(null)
   // Data state
   const [contracts, setContracts] = useState<Contract[]>([])
@@ -1027,7 +1027,7 @@ export default function AnalysisResultPage() {
   const hasData = contracts.length > 0
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden rounded-xl bg-bg">
       {loading ? (
         <div className="flex-1 flex items-center justify-center text-muted text-sm">加载中...</div>
       ) : (

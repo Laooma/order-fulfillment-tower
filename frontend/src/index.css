@@ -406,25 +406,34 @@ body {
 
 /* Resize handle for right panel */
 .panel-resize-handle {
-  width: 5px;
+  width: 10px;
   cursor: col-resize;
   background: transparent;
   flex-shrink: 0;
   position: relative;
   z-index: 10;
-  transition: background 120ms;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.panel-resize-handle::after {
+/* Gutter center groove — the visible "drainage channel" */
+.panel-resize-handle::before {
   content: '';
-  position: absolute;
-  inset: 0 1px;
-  border-radius: 2px;
-  transition: background 150ms;
+  width: 2px;
+  height: 100%;
+  background: var(--color-border);
+  border-radius: 1px;
+  transition: background 200ms, width 150ms;
 }
-.panel-resize-handle:hover::after,
-.panel-resize-handle:active::after {
+.panel-resize-handle:hover::before {
   background: var(--color-accent);
-  opacity: 0.5;
+  opacity: 0.4;
+  width: 3px;
+}
+.panel-resize-handle:active::before {
+  background: var(--color-accent);
+  opacity: 0.6;
+  width: 3px;
 }
 
 /* ── Split Pane System ── */
@@ -434,6 +443,9 @@ body {
   overflow: hidden;
   position: relative;
   min-width: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
 }
 .split-pane-header {
   display: flex;
@@ -446,6 +458,7 @@ body {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--color-muted);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 .split-pane-header-label {
   font-weight: 500;
@@ -2056,6 +2069,7 @@ body {
   background: var(--color-surface);
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   margin-bottom: 12px;
+  overflow: hidden;
 }
 .detail-card-header {
   padding: 12px 16px;
@@ -2620,6 +2634,7 @@ body {
   width: 260px;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
