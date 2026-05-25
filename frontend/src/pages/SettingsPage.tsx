@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Cpu, FileText, Building2, Users, Shield, Code2, Server, Puzzle, Clock, Bell, Wrench, Plus, Trash2, Edit3, Save, X, ChevronRight, ChevronDown, Play, ToggleLeft, ToggleRight, Mail, Send, MessageSquare, Pencil } from 'lucide-react'
+import { Cpu, FileText, Building2, Users, Shield, Code2, Server, Puzzle, Clock, Bell, Wrench, BookOpen, Plus, Trash2, Edit3, Save, X, ChevronRight, ChevronDown, Play, ToggleLeft, ToggleRight, Mail, Send, MessageSquare, Pencil } from 'lucide-react'
 import { api, type Skill, type Hook, type McpServer, type Plugin, type CronTask, type ToolConfig } from '../lib/api'
 import MarkdownEditor from '../components/MarkdownEditor'
 import { getSkillIcon, skillIconNames } from '../lib/skillIcons'
@@ -29,6 +29,7 @@ interface LlmConfig {
 const allSettingsTabs = [
   { key: 'llm', label: '大模型接入点', icon: Cpu, menuId: 'menu_settings_llm' },
   { key: 'skills', label: 'Skill 管理', icon: FileText, menuId: 'menu_settings_skills' },
+  { key: 'claw', label: '经验教训', icon: BookOpen, menuId: 'menu_settings_claw' },
   { key: 'hooks', label: 'Hook 管理', icon: Code2, menuId: 'menu_settings_hooks' },
   { key: 'mcp', label: 'MCP 管理', icon: Server, menuId: 'menu_settings_mcp' },
   { key: 'plugins', label: '插件管理', icon: Puzzle, menuId: 'menu_settings_plugins' },
@@ -87,6 +88,7 @@ export default function SettingsPage() {
           <div className="settings-panel-body">
             {activeKey === 'llm' && <LlmConfigPanel />}
             {activeKey === 'skills' && <SkillConfigPanel />}
+            {activeKey === 'claw' && <ClawConfigPanel />}
             {activeKey === 'hooks' && <HookConfigPanel />}
             {activeKey === 'mcp' && <McpConfigPanel />}
             {activeKey === 'plugins' && <PluginConfigPanel />}
@@ -3815,6 +3817,83 @@ function FormGroup({ label, children }: { label: string; children: React.ReactNo
     <div className="settings-form-group">
       <label className="settings-form-label">{label}</label>
       {children}
+    </div>
+  )
+}
+
+/* ── ClawConfigPanel ── */
+function ClawConfigPanel() {
+  const [content, setContent] = useState('')
+  const [originalContent, setOriginalContent] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.claw.get()
+      .then((res) => {
+        setContent(res.content)
+        setOriginalContent(res.content)
+      })
+      .catch(() => setContent(''))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const dirty = content !== originalContent
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveMsg('')
+    try {
+      await api.claw.save(content)
+      setOriginalContent(content)
+      setSaveMsg('已保存')
+      setTimeout(() => setSaveMsg(''), 2000)
+    } catch {
+      setSaveMsg('保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="skill-editor" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <span className="text-sm text-muted">加载中...</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="skill-config">
+      <div className="skill-editor">
+        <div className="skill-editor-header">
+          <div className="skill-editor-header-left">
+            <span className="skill-editor-skill-name">CLAW.md</span>
+            <span className="skill-editor-file-name">经验教训日志</span>
+          </div>
+          <div className="skill-editor-header-right">
+            {saveMsg && (
+              <span className={`skill-save-status ${saveMsg === '保存失败' ? 'error' : ''}`}>
+                {saveMsg}
+              </span>
+            )}
+            {dirty && !saveMsg && (
+              <span className="skill-save-status">已修改</span>
+            )}
+            <button
+              className="btn btn-accent btn-sm"
+              onClick={handleSave}
+              disabled={!dirty || saving}
+            >
+              {saving ? '保存中...' : '保存'}
+            </button>
+          </div>
+        </div>
+        <div className="skill-editor-body" style={{ flex: 1 }}>
+          <MarkdownEditor value={content} onChange={setContent} />
+        </div>
+      </div>
     </div>
   )
 }

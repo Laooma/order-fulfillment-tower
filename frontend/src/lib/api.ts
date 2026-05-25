@@ -267,6 +267,10 @@ export const api = {
   scopeFields: {
     list: () => request<any>('/scope-fields'),
   },
+  claw: {
+    get: () => request<{ content: string }>('/claw'),
+    save: (content: string) => request<{ success: boolean }>('/claw', { method: 'PUT', body: JSON.stringify({ content }) }),
+  },
   notifications: {
     channels: {
       list: () => request<{ data: any[] }>('/notification-channels'),
