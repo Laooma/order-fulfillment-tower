@@ -604,6 +604,79 @@ body {
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+.context-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  color: var(--color-success);
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: oklch(96% 0.03 145);
+  transition: color 0.3s, background 0.3s;
+}
+.context-indicator.warning {
+  color: var(--color-warning);
+  background: oklch(96% 0.04 75);
+}
+.context-indicator.danger {
+  color: var(--color-danger);
+  background: oklch(96% 0.03 25);
+}
+.context-indicator.compacting {
+  color: var(--color-accent);
+  background: oklch(96% 0.03 255);
+}
+.context-bar {
+  display: inline-block;
+  width: 40px;
+  height: 6px;
+  background: oklch(90% 0.005 250);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.context-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-success);
+  transition: width 0.5s ease;
+}
+.warning .context-bar-fill { background: var(--color-warning); }
+.danger .context-bar-fill { background: var(--color-danger); }
+.context-bar-fill.compacting {
+  width: 100% !important;
+  background: var(--color-accent);
+  animation: compacting-stripes 0.6s linear infinite;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    rgba(255,255,255,0.4) 4px,
+    rgba(255,255,255,0.4) 8px
+  );
+  background-size: 200% 100%;
+}
+@keyframes compacting-stripes {
+  from { background-position: 0 0; }
+  to { background-position: 16px 0; }
+}
+.dark .context-indicator {
+  background: oklch(28% 0.04 145);
+}
+.dark .context-indicator.warning {
+  background: oklch(28% 0.05 75);
+}
+.dark .context-indicator.danger {
+  background: oklch(28% 0.04 25);
+}
+.dark .context-indicator.compacting {
+  background: oklch(28% 0.04 255);
+}
+
 /* Model selector */
 .model-select-wrap {
   display: flex;
@@ -749,16 +822,32 @@ body {
   height: 22px;
   padding: 0 12px;
   flex-shrink: 0;
-  background: #fff;
-  border-top: 1px solid var(--color-border);
   font-size: 10px;
   font-family: var(--font-mono);
-  color: var(--color-muted);
+  color: oklch(30% 0.04 250);
   gap: 8px;
+  max-width: 33vw;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  background: oklch(96% 0.02 250);
+  border-radius: 4px;
+  transition: background-color 30s ease;
+}
+.panel-status-bar.timeout {
+  background: oklch(95% 0.04 75);
+  color: oklch(35% 0.06 65);
+  transition: background-color 30s ease;
+}
+.panel-status-bar.stalled {
+  background: oklch(96% 0.03 25);
+  color: oklch(35% 0.06 25);
+  transition: background-color 30s ease;
 }
 .panel-status-bar.done {
-  color: var(--color-success);
-  border-top-color: oklch(92% 0.03 145);
+  background: oklch(96% 0.04 145);
+  color: oklch(35% 0.06 145);
+  transition: background-color 0.3s ease;
 }
 .psb-left {
   display: flex;
@@ -836,13 +925,29 @@ body {
   font-size: 11px;
   color: var(--color-danger);
   flex-shrink: 0;
+  max-width: 33vw;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  border-left: 1px solid oklch(92% 0.03 25);
+  border-right: 1px solid oklch(92% 0.03 25);
+  border-radius: 0 0 4px 4px;
 }
 .panel-error-text {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.4;
+}
+.panel-error-title {
+  font-weight: 600;
+}
+.panel-error-detail {
+  opacity: 0.8;
+  font-size: 10px;
 }
 .panel-error-dismiss {
   width: 18px;
@@ -2142,7 +2247,36 @@ body {
 }
 .detail-back-btn:hover { background: var(--color-bg); color: var(--color-fg); }
 .detail-header-title { font-size: 14px; font-weight: 600; color: var(--color-fg); }
-.detail-header-actions { display: flex; gap: 8px; }
+.detail-header-actions { display: flex; gap: 8px; align-items: center; }
+.detail-done-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 16px;
+  background: var(--color-success-bg, #ecfdf5);
+  color: var(--color-success, #059669);
+  border: 1px solid var(--color-success, #059669);
+  border-radius: var(--radius-md);
+  font-size: 14px; font-weight: 700;
+}
+.detail-done-overlay {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px 16px;
+  margin-bottom: 12px;
+  background: var(--color-success-bg, #ecfdf5);
+  border: 2px solid var(--color-success, #059669);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+.detail-done-icon {
+  width: 56px; height: 56px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--color-success, #059669);
+  color: #fff;
+  font-size: 28px; font-weight: 700;
+  border-radius: 50%;
+  margin-bottom: 12px;
+}
+.detail-done-text { font-size: 18px; font-weight: 700; color: var(--color-success, #059669); }
+.detail-done-sub { font-size: 12px; color: var(--color-muted); margin-top: 4px; }
 .meta-section-divider { height: 1px; background: var(--color-border); margin: 8px 0; }
 
 .detail-body { flex: 1; overflow-y: auto; padding: 16px; }
@@ -2161,6 +2295,12 @@ body {
 }
 .detail-card-title { font-size: 13px; font-weight: 600; color: var(--color-fg); }
 .detail-card-body { padding: 14px 16px; }
+
+.task-desc-text {
+  font-size: 13px; line-height: 1.7;
+  color: var(--color-fg);
+  white-space: pre-wrap; word-break: break-word;
+}
 
 .info-grid {
   display: grid;
@@ -2326,6 +2466,9 @@ body {
 .manual-status-badge {
   font-size: 11px; font-weight: 600; padding: 3px 10px;
   border-radius: 10px; background: var(--color-muted); color: #fff;
+}
+.manual-status-badge.done {
+  background: var(--color-success, #059669);
 }
 
 .manual-checklist { display: flex; flex-direction: column; }
@@ -4652,9 +4795,19 @@ body {
   color: var(--color-muted);
   line-height: 1.5;
 }
+.analysis-confirm-id.clickable {
+  cursor: pointer;
+  color: var(--color-accent);
+  transition: color 120ms;
+}
+.analysis-confirm-id.clickable:hover { color: var(--color-accent-hover, oklch(57% 0.22 255)); text-decoration: underline; }
+.analysis-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
 .analysis-confirm-btn {
   height: 32px;
-  margin-top: 4px;
   background: var(--color-success);
   color: #fff;
   border: none;
@@ -4666,8 +4819,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 0 14px;
 }
 .analysis-confirm-btn:hover { background: oklch(48% 0.18 145); }
+.analysis-confirm-btn.primary {
+  background: var(--color-accent);
+  color: #fff;
+}
+.analysis-confirm-btn.primary:hover { background: var(--color-accent-hover, oklch(57% 0.22 255)); }
 
 /* Thinking dot animation */
 .thinking-dot {
@@ -4863,6 +5022,13 @@ body {
   max-height: 35%;
   border-top: 1px solid var(--color-border-shell);
   background: var(--color-shell);
+  max-width: 33vw;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  border-left: 1px solid var(--color-border-shell);
+  border-right: 1px solid var(--color-border-shell);
+  border-radius: 0 0 4px 4px;
 }
 .incomplete-task-warnings {
   padding: 4px 8px;
@@ -6751,7 +6917,10 @@ body {
 .dark .panel-header,
 .dark .panel-body,
 .dark .panel-footer,
-.dark .panel-status-bar { background: var(--color-surface); }
+.dark .panel-status-bar { background: oklch(28% 0.03 250); color: oklch(78% 0.04 250); }
+.dark .panel-status-bar.timeout { background: oklch(28% 0.06 75); color: oklch(78% 0.08 75); }
+.dark .panel-status-bar.stalled { background: oklch(28% 0.05 25); color: oklch(78% 0.08 25); }
+.dark .panel-status-bar.done { background: oklch(28% 0.06 145); color: oklch(78% 0.08 145); }
 .dark .split-pane-header { background: oklch(24% 0.008 255); }
 
 /* Table overrides */
@@ -6838,7 +7007,6 @@ body {
 /* Panel error bar */
 .dark .panel-error-bar { border-top-color: oklch(35% 0.04 25); }
 .dark .panel-error-dismiss:hover { background: oklch(32% 0.06 25); }
-.dark .panel-status-bar.done { border-top-color: oklch(35% 0.05 145); }
 
 /* Skill icon button — lighter shadow in dark mode */
 .dark .skill-icon-btn:hover { box-shadow: 0 0 0 3px oklch(100% 0 0 / 0.10); }

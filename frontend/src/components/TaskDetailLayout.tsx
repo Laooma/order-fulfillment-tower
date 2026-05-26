@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { getAnalysisTaskId, cn } from '../lib/utils'
+import { useChatStore } from '../stores/chatStore'
 import type { MetaPanelConfig } from '../types/metaConfig'
 import { defaultMetaConfig } from '../configs/taskMetaConfigs'
 
@@ -25,8 +26,17 @@ interface TaskDetailLayoutProps {
 
 export default function TaskDetailLayout({ title, children, taskId, contractId, task, metaConfig }: TaskDetailLayoutProps) {
   const navigate = useNavigate()
+  const sendMessage = useChatStore((s) => s.sendMessage)
   const analysisTaskId = taskId ? getAnalysisTaskId(taskId) : ''
   const config = metaConfig || defaultMetaConfig
+
+  const isDone = task?.statusLabel === '已完成' || (task as any)?.status === 'done'
+
+  const handleMarkComplete = () => {
+    if (!sendMessage || !taskId) return
+    const taskTitle = task?.title || title || ''
+    sendMessage(`请使用 mark_task_complete 工具验证任务 ${taskId}（${taskTitle}）是否真正完成，验证后发送飞书通知`)
+  }
 
   // Merge computed fields into the task-like lookup object
   const enriched: Record<string, any> = { ...(task || {}), analysisTaskId }
@@ -42,8 +52,14 @@ export default function TaskDetailLayout({ title, children, taskId, contractId, 
           <span className="detail-header-title">{title}</span>
         </div>
         <div className="detail-header-actions">
-          <button className="btn btn-outline">转交</button>
-          <button className="btn btn-accent">标记完成</button>
+          {isDone ? (
+            <span className="detail-done-badge">✓ 已完成</span>
+          ) : (
+            <>
+              <button className="btn btn-outline">转交</button>
+              <button className="btn btn-accent" onClick={handleMarkComplete}>标记完成</button>
+            </>
+          )}
         </div>
       </div>
 

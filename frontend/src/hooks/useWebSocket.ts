@@ -9,7 +9,7 @@ export interface TodoItem {
 }
 
 export interface WsMessage {
-  type: 'chat' | 'abort' | 'chunk' | 'complete' | 'stopped' | 'error' | 'skill_assigned' | 'tool_call' | 'tool_result' | 'status' | 'todo_list' | 'a2ui_surface' | 'task_boundary'
+  type: 'chat' | 'abort' | 'chunk' | 'complete' | 'stopped' | 'error' | 'skill_assigned' | 'tool_call' | 'tool_result' | 'status' | 'todo_list' | 'a2ui_surface' | 'task_boundary' | 'context_update' | 'compacting' | 'todo_suggestion'
   sessionId?: string
   skillId?: string
   autoAssign?: boolean
@@ -47,8 +47,18 @@ export interface WsMessage {
   todos?: TodoItem[]
   action?: 'create' | 'update'
   incompleteTasks?: string[]
+  phase?: 'start' | 'done'
   messages?: Array<{ role: string; content: string }>
   title?: string
+  suggestedTodos?: Array<{
+    category: string
+    description: string
+    priority: string
+    assignee?: string
+    dueDate?: string
+    taskType?: string
+    contractNumber?: string
+  }>
 }
 
 export function useWebSocket(url: string) {
@@ -56,14 +66,20 @@ export function useWebSocket(url: string) {
   const [connected, setConnected] = useState(false)
   const [messages, setMessages] = useState<WsMessage[]>([])
   const [thinking, setThinking] = useState(false)
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
+  const reconnectAttempts = useRef(0)
+  const MAX_RECONNECT_DELAY = 30000
 
-  useEffect(() => {
+  const connect = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
+
     const ws = new WebSocket(url)
     wsRef.current = ws
 
     ws.onopen = () => {
       console.log('[WS] Connected')
       setConnected(true)
+      reconnectAttempts.current = 0
     }
 
     ws.onmessage = (event) => {
@@ -82,23 +98,34 @@ export function useWebSocket(url: string) {
     }
 
     ws.onclose = () => {
-      console.log('[WS] Disconnected')
+      console.log('[WS] Disconnected, will reconnect...')
       setConnected(false)
+      // Exponential backoff: 1s, 2s, 4s, 8s, ... max 30s
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), MAX_RECONNECT_DELAY)
+      reconnectAttempts.current++
+      reconnectTimer.current = setTimeout(connect, delay)
     }
 
     ws.onerror = (err) => {
       console.error('[WS] Error:', err)
-    }
-
-    return () => {
       ws.close()
     }
   }, [url])
 
-  const send = useCallback((msg: WsMessage) => {
+  useEffect(() => {
+    connect()
+    return () => {
+      clearTimeout(reconnectTimer.current)
+      wsRef.current?.close()
+    }
+  }, [connect])
+
+  const send = useCallback((msg: WsMessage): boolean => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg))
+      return true
     }
+    return false
   }, [])
 
   const clearMessages = useCallback(() => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { cn } from '../lib/utils'
 import SubNav from '../components/SubNav'
 import { api } from '../lib/api'
@@ -60,7 +60,7 @@ interface TodoTask {
   priority: 'high' | 'medium' | 'low'
   assignee: string
   dueDate: string
-  status: 'pending' | 'progress' | 'overdue'
+  status: 'pending' | 'progress' | 'overdue' | 'done'
   taskType: 'agent' | 'decision' | 'manual'
 }
 
@@ -204,6 +204,7 @@ const statusBadge = (s: string) => {
     case 'pending': return 'badge-pill badge-info'
     case 'progress': return 'badge-pill badge-success'
     case 'overdue': return 'badge-pill badge-danger'
+    case 'done': return 'badge-pill badge-success'
     default: return 'badge-pill badge-neutral'
   }
 }
@@ -213,6 +214,7 @@ const statusLabel = (s: string) => {
     case 'pending': return '待处理'
     case 'progress': return '进行中'
     case 'overdue': return '已逾期'
+    case 'done': return '已完成'
     default: return '待处理'
   }
 }
@@ -527,7 +529,25 @@ function TodoListView({ tasks }: { tasks: TodoTask[] }) {
                       <td>{t.dueDate}</td>
                       <td><span className={statusBadge(t.status)}>{statusLabel(t.status)}</span></td>
                       <td>
-                        <button onClick={() => handleOpenTask(t.taskType, t.id)} className="order-num">处理</button>
+                        <div className="td-actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button onClick={() => handleOpenTask(t.taskType, t.id)} className="order-num">处理</button>
+                          {t.status !== 'done' && (
+                            <>
+                              <span style={{ color: 'var(--color-border)' }}>|</span>
+                              <button
+                                className="order-num"
+                                style={{ color: 'var(--color-success)' }}
+                                onClick={() => {
+                                  const storeSendMessage = useChatStore.getState().sendMessage
+                                  if (!storeSendMessage) return
+                                  storeSendMessage(`请使用 mark_task_complete 工具验证任务 ${t.id}（${t.description}）是否真正完成，验证后发送飞书通知`)
+                                }}
+                              >
+                                标记完成
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -690,6 +710,7 @@ function EmptyTodoState() {
 export default function AnalysisResultPage() {
   const { taskId } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   type PaneKey = 'kanban' | 'todo' | 'cardDetail' | 'a2ui'
   const [view, setView] = useState<PaneKey>('kanban')
   const [activeContractId, setActiveContractId] = useState('')
@@ -710,7 +731,7 @@ export default function AnalysisResultPage() {
   const [todosMap, setTodosMap] = useState<Map<string, TodoTask[]>>(new Map())
   const [loading, setLoading] = useState(true)
   const [generatingTodos, setGeneratingTodos] = useState(false)
-  const [taskInfo, setTaskInfo] = useState<{ id: string; creator: string; updatedAt: string; status: string } | null>(null)
+  const [taskInfo, setTaskInfo] = useState<{ id: string; creator: string; updatedAt: string; status: string; skillId?: string; skillName?: string } | null>(null)
 
   // A2UI analysis result surface state
   const [a2uiSurfaces, setA2uiSurfaces] = useState<{ title: string; messages: A2uiMessageBase[] } | null>(null)
@@ -779,6 +800,33 @@ export default function AnalysisResultPage() {
     fetchStatus()
   }, [fetchStatus])
 
+  // Deep-link: auto-open chat when URL has ?chat=1&prompt=...
+  useEffect(() => {
+    const chatParam = searchParams.get('chat')
+    const promptParam = searchParams.get('prompt')
+    if (chatParam !== '1' || !promptParam) return
+
+    // Wait for chatStore.sendMessage to be registered by ChatPanel
+    let attempts = 0
+    const maxAttempts = 20
+    const timer = setInterval(() => {
+      attempts++
+      const storeSendMessage = useChatStore.getState().sendMessage
+      if (storeSendMessage) {
+        clearInterval(timer)
+        storeSendMessage(promptParam)
+        // Clean query params from URL after triggering
+        const newParams = new URLSearchParams(searchParams)
+        newParams.delete('chat')
+        newParams.delete('prompt')
+        setSearchParams(newParams, { replace: true })
+      } else if (attempts >= maxAttempts) {
+        clearInterval(timer)
+      }
+    }, 300)
+    return () => clearInterval(timer)
+  }, [searchParams.get('chat'), searchParams.get('prompt')])
+
   // Re-fetch when analysis completes
   const handleAnalysisComplete = useCallback((analysisId: string) => {
     fetchData()
@@ -793,6 +841,8 @@ export default function AnalysisResultPage() {
     const cfg: ChatPageConfig = {
       page: 'analysis',
       taskId: taskId || undefined,
+      defaultSkillId: taskInfo?.skillId || undefined,
+      defaultSkillName: taskInfo?.skillName || undefined,
       onAnalysisComplete: handleAnalysisComplete,
       onA2uiSurface: (data: { title: string; messages: unknown[] }) => {
         setA2uiSurfaces({ title: data.title, messages: data.messages as A2uiMessageBase[] })
@@ -809,7 +859,7 @@ export default function AnalysisResultPage() {
     }
     setPageConfig(cfg)
     return () => { setPageConfig(null) }
-  }, [taskId, handleAnalysisComplete, setPageConfig])
+  }, [taskId, taskInfo?.skillId, taskInfo?.skillName, handleAnalysisComplete, setPageConfig])
 
   // Fetch task info for LeftPanel header
   useEffect(() => {
@@ -824,6 +874,8 @@ export default function AnalysisResultPage() {
           creator: data.initiator || '—',
           updatedAt: data.completedAt || data.createdAt || '—',
           status: data.status || 'analyzing',
+          skillId: data.skillId || '',
+          skillName: data.skillName || '',
         })
       })
       .catch(() => {

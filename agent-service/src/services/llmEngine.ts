@@ -9,6 +9,7 @@ export interface LlmOptions {
 
 export interface StreamChunk {
   content: string
+  reasoningContent?: string
   finishReason?: string
   toolCalls?: Array<{
     id: string
@@ -75,6 +76,7 @@ export async function* streamChat(
 
         const chunk: StreamChunk = {
           content: delta?.content || '',
+          reasoningContent: delta?.reasoning_content || undefined,
           finishReason,
           toolCalls: delta?.tool_calls,
         }
@@ -99,7 +101,7 @@ export async function* streamChat(
 export async function chatCompletion(
   request: VolcanoRequest,
   options: LlmOptions,
-): Promise<{ content: string; toolCalls?: StreamChunk['toolCalls']; usage?: StreamChunk['usage'] }> {
+): Promise<{ content: string; reasoningContent?: string; toolCalls?: StreamChunk['toolCalls']; usage?: StreamChunk['usage'] }> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 30000)
 
@@ -131,6 +133,7 @@ export async function chatCompletion(
     const message = data.choices?.[0]?.message
     return {
       content: message?.content || '',
+      reasoningContent: message?.reasoning_content || undefined,
       toolCalls: message?.tool_calls,
       usage: data.usage ? {
         promptTokens: data.usage.prompt_tokens || 0,

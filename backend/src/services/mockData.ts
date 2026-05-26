@@ -25,7 +25,7 @@ function generateOrders(count: number): SalesOrder[] {
   const baseDate = new Date('2025-01-01')
   for (let i = 0; i < count; i++) {
     const id = `HT2025${pad(randInt(1, 99))}${String(i + 1).padStart(3, '0')}`
-    const contractNumber = `SCJD2025${pad(randInt(1, 12))}${pad(randInt(1, 28))}${String(randInt(1, 999)).padStart(3, '0')}`
+    const contractNumber = `SC-2025-00${randInt(1, 5)}`
     const customer = randItem(customers)
     const brand = randItem(brands)
     const salesperson = randItem(salespeople)
@@ -154,7 +154,7 @@ function generateAnalysisTasks(count: number): AnalysisTask[] {
       status,
       createdAt: created.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '/'),
       completedAt: completed ? completed.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '/') : '',
-      relatedContracts: Array.from({ length: randInt(1, 3) }, () => `SCJD2025${pad(randInt(1, 12))}${pad(randInt(1, 28))}${String(randInt(1, 999)).padStart(3, '0')}`),
+      relatedContracts: Array.from({ length: randInt(1, 3) }, () => `SC-2025-00${randInt(1, 5)}`),
       skillId: skill ? skill.id : '',
       skillName: skill ? skill.name : '',
     })

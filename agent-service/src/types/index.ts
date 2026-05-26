@@ -78,7 +78,7 @@ export interface AgentMessage {
 export interface Session {
   id: string
   skillId: string
-  messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; toolCallId?: string; toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }> }>
+  messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; reasoningContent?: string; toolCallId?: string; toolCalls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }> }>
   createdAt: number
   updatedAt: number
   workDir: string
@@ -115,7 +115,7 @@ export class McpPoolExhaustedError extends Error {
 
 export interface VolcanoRequest {
   model: string
-  messages: Array<{ role: string; content: string; name?: string }>
+  messages: Array<{ role: string; content: string; name?: string; reasoning_content?: string; tool_calls?: unknown; tool_call_id?: string }>
   stream?: boolean
   temperature?: number
   tools?: Array<{

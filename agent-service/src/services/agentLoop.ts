@@ -39,7 +39,13 @@ async function trackTokensAndCompact(key: string, session: Session, promptTokens
   sessionStore.addInputTokens(key, promptTokens)
   session.cumulativeInputTokens += promptTokens
 
-  if (sessionStore.shouldCompact(key)) {
+  // Dynamic threshold: 90% of model context window (input tokens only)
+  const { getAllModels } = await import('./llmConfig.js')
+  const modelInfo = getAllModels().find((m) => m.id === modelId)
+  const contextWindow = modelInfo?.contextWindow || 128000
+  const dynamicThreshold = Math.floor(contextWindow * 0.9)
+
+  if (session.cumulativeInputTokens >= dynamicThreshold) {
     try {
       const { getProviderForModel } = await import('./llmConfig.js')
       const provider = getProviderForModel(modelId)
@@ -65,19 +71,39 @@ async function trackTokensAndCompact(key: string, session: Session, promptTokens
   }
 }
 
-const SUMMARIZATION_PROMPT = `You are a conversation summarizer. Summarize the following conversation messages into a structured summary.
+const SUMMARIZATION_PROMPT = `You are summarizing a conversation between an AI agent and a user. All tasks described below are already completed. Your summary must preserve enough context that the conversation can resume seamlessly — a developer reading it cold should understand what happened, what was decided, and what comes next.
 
-Format your summary exactly as:
-Conversation summary:
-- Scope: X user messages, Y assistant messages, Z tool calls.
-- Tools mentioned: comma-separated list of unique tool names.
-- Recent user requests: up to 3, each under 160 chars.
-- Pending work: items inferred from keywords (todo, next, pending, follow up, remaining).
-- Key files referenced: up to 8 file paths.
-- Current work: what was most recently being worked on.
-- Key timeline: one line per message, "role: truncated content".
+Format your summary as:
 
-Keep the summary under 1200 characters and 24 lines. Each line under 160 characters.`
+1. Primary Request and Intent:
+   - What the user originally asked for and why.
+
+2. Key Technical Concepts:
+   - Technologies, APIs, frameworks, patterns, or domain concepts discussed.
+
+3. Files and Code Sections:
+   - List each file read or modified, with a one-line description of what happened to it.
+   - Include approximate line ranges when known.
+
+4. Errors and fixes:
+   - Every error encountered, its root cause, and how it was resolved.
+
+5. Problem Solving:
+   - Problems solved and ongoing troubleshooting.
+
+6. All user messages:
+   - List every user message in chronological order (each under 160 chars).
+
+7. Pending Tasks:
+   - Items explicitly marked as TODO or not yet started.
+
+8. Current Work:
+   - What was being done immediately before this summary.
+
+9. Optional Next Step:
+   - One concrete action the AI could take next to move the conversation forward.
+
+Keep the summary under 2000 characters and 40 lines. Each line under 200 characters.`
 
 function formatMessagesForSummary(messages: Session['messages'], prevSummary?: string): string {
   let text = ''
@@ -236,6 +262,410 @@ async function handleFetchBizData(args: Record<string, unknown>): Promise<string
     return JSON.stringify(data, null, 2)
   } catch (err: any) {
     return `Error fetching biz data: ${err.message}`
+  }
+}
+
+const FETCH_ORDERS_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'fetch_orders',
+    description: '获取销售订单列表，支持按品牌、销售员、签收状态、发货状态、异常标记、客户等筛选。返回订单数组，每条订单包含 id/contractNumber/customer/brand/salesperson/orderDate/deliveryDays/shipMethod/skuCount/amount/receiptRatio/shipmentRatio/isException 等字段。适用于生成履约看板仪表盘。',
+    parameters: {
+      type: 'object',
+      properties: {
+        brand: { type: 'string', description: '品牌主体' },
+        salesperson: { type: 'string', description: '销售员姓名' },
+        shipMethod: { type: 'string', description: '发货方式' },
+        receiptStatus: { type: 'string', description: '签收状态' },
+        deliveryStatus: { type: 'string', description: '出库状态' },
+        isException: { type: 'boolean', description: '是否异常订单' },
+        customer: { type: 'string', description: '客户主体名称' },
+        pageSize: { type: 'number', description: '每页数量，默认100' },
+      },
+      required: [],
+    },
+  },
+}
+
+const MARK_TASK_COMPLETE_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'mark_task_complete',
+    description: '验证并标记执行任务为已完成。先检查关联订单数据确认任务是否真正完成，然后将任务标记为done并通过飞书机器人通知相关人员，附带分析任务深度链接供点击进入分析。',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: '执行任务ID（analysis_todos表的id）' },
+        assigneeNote: { type: 'string', description: '待办人填写的完成备注说明' },
+      },
+      required: ['taskId'],
+    },
+  },
+}
+
+async function handleMarkTaskComplete(args: Record<string, unknown>, ws: WebSocket, sessionId: string): Promise<string> {
+  const taskId = String(args.taskId || '')
+  const assigneeNote = String(args.assigneeNote || '')
+
+  if (!taskId) {
+    return 'Error: taskId is required'
+  }
+
+  try {
+    // Step 1: GET task data without marking complete
+    const getRes = await fetch(`${BACKEND_API}/tasks/${encodeURIComponent(taskId)}`)
+    if (!getRes.ok) {
+      return `Error: Failed to fetch task — ${getRes.statusText}`
+    }
+    const taskData = await getRes.json() as any
+    const analysisTaskId = taskData.analysisTaskId || ''
+
+    // Step 2: Extract material codes from task description and fetch LIVE stock data
+    const taskDescription = taskData.description || taskData.title || ''
+    const taskContractId = taskData.contractId || ''
+    const materialCodeRegex = /\b([A-Z]{2,4}-\d{3,4}[A-Za-z]?|[A-Z]{2}\d{6}|[A-Z]+-\d{2,4}-[A-Za-z]?)\b/g
+    const materialCodes = [...new Set(
+      (taskDescription.match(materialCodeRegex) || [])
+        .filter((c: string) => !/^\d{4}-\d{2}-\d{2}$/.test(c)) // exclude dates
+    )]
+
+    let liveMaterialContext = ''
+    const liveShortages: Array<{ materialCode: string; contractNo: string; shortageQty: number; currentStock: number; requiredQty: number }> = []
+    for (const code of materialCodes) {
+      try {
+        const matRes = await fetch(`${BACKEND_API}/biz-contracts/materials/search?code=${encodeURIComponent(code)}`)
+        if (matRes.ok) {
+          const matData = await matRes.json()
+          if (matData.contracts?.length > 0) {
+            // Filter to only this task's contract to avoid LLM confusion from other contracts
+            let contracts = matData.contracts
+            if (taskContractId) {
+              contracts = contracts.filter((c: any) => c.contractNo === taskContractId)
+            }
+            if (contracts.length === 0) continue
+            const summary = contracts.map((c: any) => ({
+              materialCode: matData.materialCode,
+              contractNo: c.contractNo,
+              currentStock: c.currentStock,
+              requiredQty: c.requiredQty,
+              shortageQty: c.shortageQty,
+              inTransit: c.inTransit,
+              kitStatus: c.kitStatus,
+              supplier: c.supplier,
+            }))
+            liveMaterialContext += `\n[实时库存] ${JSON.stringify(summary)}`
+            for (const s of summary) {
+              if (s.shortageQty > 0) {
+                liveShortages.push(s)
+              }
+            }
+          }
+        }
+      } catch { /* material search optional */ }
+    }
+
+    // Programmatic safety net: if the task's contract-related materials still have shortage > 0, auto-reject
+    if (liveShortages.length > 0) {
+      const shortageDetails = liveShortages
+        .map(s => `${s.materialCode}: 缺口${s.shortageQty}个 (库存${s.currentStock}/需求${s.requiredQty})`)
+        .join(', ')
+      return JSON.stringify({
+        taskId,
+        analysisTaskId,
+        status: taskData.status || 'pending',
+        verified: false,
+        verificationNote: `未完成。合同${taskContractId}的实时库存数据显示物料仍有缺口: ${shortageDetails}`,
+        message: `任务验证未通过，已拦截标记完成操作。实时库存数据显示物料仍有缺口。`,
+      }, null, 2)
+    }
+
+    // Step 3: Fetch analysis context (filter to relevant cards only)
+    let analysisContext = ''
+    const contractNumbers: string[] = []
+    if (analysisTaskId) {
+      try {
+        const analysisRes = await fetch(`${BACKEND_API}/analysis/${encodeURIComponent(analysisTaskId)}/full`)
+        if (analysisRes.ok) {
+          const analysisData = await analysisRes.json()
+          if (analysisData.orders) {
+            for (const order of analysisData.orders) {
+              if (order.contract_number) contractNumbers.push(order.contract_number)
+            }
+          }
+          // Extract only cards matching the task's material codes to keep context focused
+          const relevantCards: any[] = []
+          if (analysisData.orders) {
+            for (const order of analysisData.orders) {
+              for (const cat of order.problemCategories || []) {
+                for (const card of cat.cards || []) {
+                  if (materialCodes.length === 0 || materialCodes.includes(card.material_code)) {
+                    relevantCards.push({
+                      material_code: card.material_code,
+                      material_name: card.material_name,
+                      status: card.status,
+                      cardDetail: card.cardDetail?.materialInfo,
+                    })
+                  }
+                }
+              }
+            }
+          }
+          if (relevantCards.length > 0) {
+            analysisContext = JSON.stringify(relevantCards)
+          }
+        }
+      } catch { /* analysis context optional */ }
+    }
+
+    // Step 4: LLM verification
+    const modelId = (await import('./llmConfig.js')).getDefaultModel()
+    const provider = (await import('./llmConfig.js')).getProviderForModel(modelId)
+
+    let verificationNote = ''
+    let verificationPassed = true
+
+    if (provider) {
+      try {
+        const verifyResp = await chatCompletion({
+          model: modelId,
+          messages: [
+            {
+              role: 'system',
+              content: `你是订单履约控制塔的任务完成验证助手。你的职责是严格验证一个任务是否真的应该被标记为完成。
+
+关键原则：任务描述的是一个需要人去执行的问题（缺口、滞后、逾期等）。"存在理论解决方案"不等于任务完成。必须确认问题在数据库中已经被实际解决。
+
+判定规则（必须严格遵守）：
+1. [实时库存]数据是数据库当前最新状态，[分析快照]是问题发现时的记录。以[实时库存]为准判断当前状态。
+2. 仅当[实时库存]数据显示问题已被实际解决（如 currentStock >= requiredQty 即缺口已消除、shortageQty=0），才可判定"已完成"。
+3. 如果[实时库存]中找不到对应物料，请查看[分析快照]。如果两者都没有该物料数据，回复"未完成"并说明无法确认。
+4. "其他合同有库存可调拨"不是完成 — 调拨尚未执行。"供应商可以加急"不是完成 — 加急尚未下单。
+5. 如果无法从数据中确认问题已实际解决，必须回复"未完成"并说明哪些条件未满足。
+
+你的回复必须以"已完成"或"未完成"开头。绝大多数情况下应该回复"未完成"。`,
+            },
+            {
+              role: 'user',
+              content: `任务信息：
+- 任务ID: ${taskId}
+- 任务描述: ${taskDescription}
+- 负责人: ${taskData.assignee || ''}
+- 待办人备注: ${assigneeNote || '无'}
+
+${liveMaterialContext ? `实时库存数据（数据库当前最新状态，以这份数据为准）:\n${liveMaterialContext}` : '（未找到相关物料实时数据）'}
+${analysisContext ? `\n分析快照数据（问题发现时记录，仅供参考）:\n${analysisContext}` : ''}
+
+请判断该任务是否真的可以标记为完成。请以"已完成"或"未完成"开头给出结论。`,
+            },
+          ],
+          temperature: 0.3,
+        }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl })
+        verificationNote = verifyResp.content || ''
+
+        // Strict verification: must start with "已完成" and NOT contain hedging
+        const startsWithDone = /^已完成/.test(verificationNote.trim())
+        const hedgingIndicators = ['可通过', '可以通', '但需', '但需要', '建议', '还需', '仍需', '尚需', '待', '未完成', '不通过', '未达标', '尚未完成', '不能标记', '不可标记', '不建议']
+        const hasHedging = hedgingIndicators.some(ind => verificationNote.includes(ind))
+        verificationPassed = startsWithDone && !hasHedging
+      } catch {
+        verificationNote = '自动验证完成（LLM验证跳过）'
+      }
+    } else {
+      verificationNote = '自动验证完成（未配置LLM）'
+    }
+
+    // Step 5: If verification FAILS, block the operation
+    if (!verificationPassed) {
+      return JSON.stringify({
+        taskId,
+        analysisTaskId,
+        status: taskData.status || 'pending',
+        verified: false,
+        verificationNote,
+        message: `任务验证未通过，已拦截标记完成操作。验证结论: ${verificationNote}`,
+      }, null, 2)
+    }
+
+    // Step 6: Verification PASSED — call mark-complete API
+    const markRes = await fetch(`${BACKEND_API}/tasks/${encodeURIComponent(taskId)}/mark-complete`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assigneeNote }),
+    })
+
+    if (!markRes.ok) {
+      const errData = await markRes.json().catch(() => ({}))
+      return `Error: Failed to mark task complete — ${(errData as any).error || markRes.statusText}`
+    }
+
+    const taskInfo = await markRes.json() as any
+    if (!taskInfo.success) {
+      return `Error: ${taskInfo.error || 'Unknown error'}`
+    }
+
+    // Step 7: Fetch remaining tasks for the same analysis, then send Feishu notification
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
+    const allContractNums = taskInfo.contractNumbers || contractNumbers
+
+    // Query remaining pending todos for this analysis task
+    let remainingTasks: any[] = []
+    if (analysisTaskId) {
+      try {
+        const tasksRes = await fetch(`${BACKEND_API}/tasks?page=1&pageSize=200`)
+        if (tasksRes.ok) {
+          const tasksData = await tasksRes.json()
+          // Filter to non-done tasks sharing any contract with the completed task
+          const relatedContracts = new Set(allContractNums)
+          remainingTasks = (tasksData.data || []).filter(
+            (t: any) => t.id !== taskId && t.status !== 'done' && (t.contractId && relatedContracts.has(t.contractId))
+          )
+        }
+      } catch { /* optional */ }
+    }
+
+    const assignee = taskData.assignee || '待办人'
+    const taskTitle = taskData.title || taskData.description || ''
+    const chatPrompt = `任务「${taskTitle}」已标记完成，请分析当前合同${(allContractNums || []).join('、')}的剩余待办情况，结合分析数据生成下一步待办任务建议`
+    const deepLink = analysisTaskId
+      ? `${FRONTEND_URL}/analysis/${encodeURIComponent(analysisTaskId)}?chat=1&prompt=${encodeURIComponent(chatPrompt)}`
+      : FRONTEND_URL
+
+    const notificationLines: string[] = []
+    notificationLines.push(`✅ ${assignee}已完成任务：${taskTitle}`)
+    notificationLines.push('')
+    notificationLines.push(`关联合同：${(allContractNums || []).join(', ')}`)
+    notificationLines.push(`任务编号：${taskId}`)
+
+    if (remainingTasks.length > 0) {
+      const pendingCount = remainingTasks.filter((t: any) => t.status === 'pending').length
+      const progressCount = remainingTasks.filter((t: any) => t.status === 'progress').length
+      const overdueCount = remainingTasks.filter((t: any) => t.status === 'overdue').length
+
+      notificationLines.push('')
+      notificationLines.push(`📋 当前仍有 ${remainingTasks.length} 个关联任务待完成：`)
+      if (overdueCount > 0) notificationLines.push(`  · 逾期：${overdueCount} 个`)
+      if (progressCount > 0) notificationLines.push(`  · 进行中：${progressCount} 个`)
+      if (pendingCount > 0) notificationLines.push(`  · 待开始：${pendingCount} 个`)
+
+      // List top 5 remaining tasks
+      const urgentTasks = remainingTasks
+        .sort((a: any, b: any) => {
+          const prioOrder: Record<string, number> = { high: 0, mid: 1, low: 2 }
+          return (prioOrder[a.priority] ?? 1) - (prioOrder[b.priority] ?? 1)
+        })
+        .slice(0, 5)
+      notificationLines.push('')
+      notificationLines.push('⏳ 优先处理：')
+      for (const t of urgentTasks) {
+        const pLabel = t.priority === 'high' ? '🔴' : t.priority === 'mid' ? '🟡' : '🟢'
+        notificationLines.push(`  ${pLabel} ${t.title || t.description || ''}（${t.assignee || '未分配'}）`)
+      }
+    } else {
+      notificationLines.push('')
+      notificationLines.push('📋 该分析任务下所有待办已全部完成。')
+    }
+
+    notificationLines.push('')
+    notificationLines.push(`👉 请登录系统查看详情并进行下一步确认：`)
+    notificationLines.push(`${deepLink}`)
+
+    const notificationMessage = notificationLines.join('\n')
+
+    try {
+      await fetch(`${BACKEND_API}/notifications/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelId: 'feishu-bot',
+          message: notificationMessage,
+        }),
+      })
+    } catch (err: any) {
+      console.error('[AgentLoop] Feishu notification failed:', err.message)
+    }
+
+    // Step 8: Send todo_suggestion for next-step follow-ups
+    const suggestedTodos = extractSuggestedTodos(verificationNote, taskData, allContractNums)
+    if (suggestedTodos.length > 0) {
+      send(ws, {
+        type: 'todo_suggestion',
+        sessionId,
+        suggestedTodos,
+        analysisId: analysisTaskId || undefined,
+      })
+    }
+
+    // Step 9: Return success result
+    return JSON.stringify({
+      taskId,
+      analysisTaskId,
+      status: 'done',
+      verified: true,
+      verificationNote,
+      deepLink,
+      message: `任务已标记完成。验证结论: ${verificationNote}。飞书通知已发送，深度链接: ${deepLink}`,
+    }, null, 2)
+  } catch (err: any) {
+    return `Error in mark_task_complete: ${err.message}`
+  }
+}
+
+function extractSuggestedTodos(verificationNote: string, taskData: any, contractNumbers: string[]): Array<{ category: string; description: string; priority: string; assignee?: string; dueDate?: string; taskType?: string; contractNumber?: string }> {
+  const todos: Array<{ category: string; description: string; priority: string; assignee?: string; dueDate?: string; taskType?: string; contractNumber?: string }> = []
+
+  // If LLM mentioned follow-up actions, create todo suggestions
+  const followUpPatterns = [
+    { keyword: '采购', category: '入库任务', taskType: 'manual' },
+    { keyword: '调拨', category: '入库任务', taskType: 'manual' },
+    { keyword: '联系', category: '异常处理', taskType: 'manual' },
+    { keyword: '确认', category: '合同确认', taskType: 'decision' },
+    { keyword: '生产', category: '异常处理', taskType: 'manual' },
+    { keyword: '发货', category: '发货任务', taskType: 'manual' },
+    { keyword: '催货', category: '入库任务', taskType: 'manual' },
+    { keyword: '签收', category: '发货任务', taskType: 'manual' },
+  ]
+
+  for (const pattern of followUpPatterns) {
+    if (verificationNote.includes(pattern.keyword)) {
+      todos.push({
+        category: pattern.category,
+        description: `[跟进] ${taskData.description || taskData.title || ''} — ${verificationNote.slice(0, 80)}`,
+        priority: 'high',
+        assignee: taskData.assignee || '',
+        taskType: pattern.taskType,
+        contractNumber: contractNumbers[0] || '',
+      })
+      break // Only one suggestion
+    }
+  }
+
+  return todos
+}
+
+async function handleFetchOrders(args: Record<string, unknown>): Promise<string> {
+  try {
+    const BACKEND_API = process.env.BACKEND_API_URL || 'http://localhost:3001/api'
+    const params = new URLSearchParams()
+    const paramKeys = ['brand', 'salesperson', 'shipMethod', 'receiptStatus', 'deliveryStatus', 'customer'] as const
+    for (const key of paramKeys) {
+      if (args[key]) params.set(key, String(args[key]))
+    }
+    if (args.isException !== undefined && args.isException !== null) {
+      params.set('isException', String(args.isException))
+    }
+    const pageSize = Number(args.pageSize) || 100
+    params.set('pageSize', String(pageSize))
+    params.set('page', '1')
+
+    const response = await fetch(`${BACKEND_API}/orders?${params.toString()}`)
+    if (!response.ok) {
+      return `Error fetching orders: HTTP ${response.status}`
+    }
+    const result = await response.json()
+    const orders = result.data || []
+    return JSON.stringify(orders, null, 2)
+  } catch (err: any) {
+    return `Error fetching orders: ${err.message}`
   }
 }
 
@@ -595,7 +1025,7 @@ function normalizeA2uiMessages(raw: unknown[]): unknown[] {
     return converted
   }
 
-  return raw.map((msg: any) => {
+  const result = raw.map((msg: any) => {
     if (!msg || typeof msg !== 'object') return msg
 
     // Already in A2UI wire format — return as-is
@@ -656,6 +1086,9 @@ function normalizeA2uiMessages(raw: unknown[]): unknown[] {
         }
       }
 
+      // Post-process: fix common LLM output patterns for components
+      postProcessComponents(flatComponents)
+
       return {
         version: 'v0.9',
         updateComponents: {
@@ -678,6 +1111,168 @@ function normalizeA2uiMessages(raw: unknown[]): unknown[] {
 
     return msg
   })
+
+  // Fix surfaceId consistency: force all messages to use the primary surfaceId from createSurface
+  const primarySurfaceId = result.reduce<string | null>((acc, m: any) => {
+    if (m?.createSurface?.surfaceId) return m.createSurface.surfaceId
+    return acc
+  }, null)
+
+  if (primarySurfaceId) {
+    for (const m of result) {
+      if ((m as any)?.updateComponents?.surfaceId) {
+        (m as any).updateComponents.surfaceId = primarySurfaceId
+      }
+      if ((m as any)?.updateDataModel?.surfaceId) {
+        (m as any).updateDataModel.surfaceId = primarySurfaceId
+      }
+    }
+  }
+
+  // If updateComponents exists but has no root, auto-create one
+  const ucMsg = result.find((m: any) => m?.updateComponents)
+  if (ucMsg) {
+    const comps: any[] = (ucMsg as any).updateComponents.components
+    const hasRoot = comps.some((c: any) => c.id === 'root')
+    if (!hasRoot) {
+      const topLevelIds = comps
+        .filter((c: any) => !comps.some((other: any) => {
+          const kids = other.children as string[] | undefined
+          return kids?.includes(c.id)
+        }))
+        .map((c: any) => c.id)
+        .filter(Boolean)
+
+      if (topLevelIds.length > 0) {
+        comps.push({
+          id: 'root',
+          component: 'Column',
+          children: topLevelIds,
+          gap: 16,
+        })
+      }
+    }
+  }
+
+  return result
+}
+
+// Post-process components to fix common LLM output patterns
+function postProcessComponents(comps: any[]) {
+  const compMap = new Map<string, any>()
+  for (const c of comps) compMap.set(c.id, c)
+
+  // Pass 1: fix template syntax {{var}} → data binding, and value→text for Text
+  for (const comp of comps) {
+    for (const key of ['text', 'value', 'title', 'label', 'content']) {
+      const val = comp[key]
+      if (typeof val === 'string' && val.startsWith('{{') && val.endsWith('}}')) {
+        const varName = val.slice(2, -2)
+        comp[key] = { path: `/${varName}` }
+      }
+    }
+    // For Text components: ensure text prop exists (map from value/title/content)
+    if (comp.component === 'Text' || comp.component === 'text') {
+      if (comp.text === undefined && comp.value !== undefined) {
+        comp.text = comp.value
+        delete comp.value
+      } else if (comp.text === undefined && comp.content !== undefined) {
+        comp.text = comp.content
+        delete comp.content
+      }
+      if (comp.text === undefined && comp.title !== undefined) {
+        comp.text = comp.title
+        delete comp.title
+      }
+      // Clean up non-Text props that LLMs sometimes add
+      delete comp.title
+      delete comp.icon
+      delete comp.name
+    }
+  }
+
+  // Pass 2: detect stat-card pattern (Text with path-bound value + title) → Card > Column
+  const newComps: any[] = []
+  const replaceMap = new Map<string, string>()
+  for (const comp of comps) {
+    const hasValueBinding = comp.value && typeof comp.value === 'object' && 'path' in comp.value
+    const hasTextBinding = comp.text && typeof comp.text === 'object' && 'path' in comp.text
+    const hasDynamicText = hasValueBinding || hasTextBinding
+    const hasStaticLabel = (comp.title && typeof comp.title === 'string') || (comp.label && typeof comp.label === 'string')
+
+    if (comp.component === 'Text' && hasDynamicText && hasStaticLabel) {
+      const cardId = comp.id
+      const valueColId = `${cardId}-col`
+      const labelId = `${cardId}-label`
+      const valueId = `${cardId}-value`
+
+      const labelText = comp.title || comp.label || ''
+      const valueBinding = comp.value || comp.text
+      const compColor = comp.color || undefined
+      const compSize = comp.size || '3xl'
+
+      compMap.set(labelId, { id: labelId, component: 'Text', text: String(labelText), variant: 'caption' })
+      compMap.set(valueId, {
+        id: valueId, component: 'Text', text: valueBinding,
+        variant: typeof compSize === 'string' ? compSize : 'h3',
+        color: compColor,
+      })
+      compMap.set(valueColId, { id: valueColId, component: 'Column', children: [labelId, valueId], gap: 4 })
+
+      const cardComp = { id: cardId, component: 'Card', child: valueColId }
+      replaceMap.set(cardId, cardId)
+      newComps.push(cardComp)
+      newComps.push(compMap.get(valueColId)!)
+      newComps.push(compMap.get(labelId)!)
+      newComps.push(compMap.get(valueId)!)
+    } else {
+      newComps.push(comp)
+    }
+  }
+
+  const finalComps: any[] = []
+  const seenIds = new Set<string>()
+  for (const c of newComps) {
+    if (!seenIds.has(c.id)) { seenIds.add(c.id); finalComps.push(c) }
+  }
+  for (const [id, comp] of compMap) {
+    if (!seenIds.has(id)) { seenIds.add(id); finalComps.push(comp) }
+  }
+  for (const comp of finalComps) {
+    if (Array.isArray(comp.children)) {
+      comp.children = comp.children.map((cid: string) => replaceMap.get(cid) || cid)
+    }
+    if (comp.child && replaceMap.has(comp.child)) {
+      comp.child = replaceMap.get(comp.child)
+    }
+  }
+
+  comps.length = 0
+  comps.push(...finalComps)
+
+  // Pass 3: detect chart-like components → convert to Chart
+  for (const comp of comps) {
+    if (comp.component !== 'Text') continue
+    const hasChartFields = comp.xField || comp.angleField || comp.yField ||
+      (comp.title && comp.data !== undefined)
+    if (!hasChartFields) continue
+
+    comp.component = 'Chart'
+    comp.chartType = comp.chartType || 'bar'
+    if (comp.xField && !comp.xKey) { comp.xKey = comp.xField; delete comp.xField }
+    if (comp.yField && !comp.yKeys) { comp.yKeys = [comp.yField]; delete comp.yField }
+    if (comp.angleField) {
+      comp.chartType = 'bar'
+      if (!comp.xKey) comp.xKey = comp.colorField || 'name'
+      if (!comp.yKeys) comp.yKeys = [comp.angleField]
+      delete comp.angleField
+      delete comp.colorField
+    }
+    if (comp.data !== undefined) { comp.rows = comp.data; delete comp.data }
+    delete comp.title
+    delete comp.height
+    delete comp.columns
+  }
 }
 
 function handleShowAnalysisResult(args: Record<string, unknown>, sessionId: string, ws: WebSocket): string {
@@ -732,6 +1327,7 @@ async function handleCreateAnalysisTask(
   ws: WebSocket,
   sessionId: string,
   skillName: string,
+  skillId: string,
   orders: string[],
   currentPage?: string,
   sessionMessages?: Array<{ role: string; content: string }>,
@@ -758,9 +1354,10 @@ async function handleCreateAnalysisTask(
       structuredJson = extractStructuredJson(allAssistantContent)
     }
 
-    const jsonToSave = structuredJson || (result ? JSON.stringify(result) : null)
-    if (jsonToSave) {
-      await saveStructuredResult(contextTaskId, jsonToSave)
+    const rawJson = structuredJson || (result ? JSON.stringify(result) : null)
+    if (rawJson) {
+      const filteredJson = await filterNewOrders(contextTaskId, rawJson)
+      await saveStructuredResult(contextTaskId, filteredJson)
     }
 
     if (a2uiMessages && Array.isArray(a2uiMessages) && a2uiMessages.length > 0) {
@@ -786,7 +1383,15 @@ async function handleCreateAnalysisTask(
   }
 
   // Create mode: no existing task context, create a new one
-  const task = await createAnalysisTask(title, skillName, orders)
+  // Guard: require order data — either from UI selection or in the result parameter
+  const hasResultOrders = result && hasOrdersInResult(result)
+  if (orders.length === 0 && !hasResultOrders) {
+    return {
+      text: '创建分析任务需要具体的订单数据。请先在界面上选择要分析的订单（勾选订单后点击"加入对话"），或在消息中明确提供订单号/合同号。当前未检测到任何订单信息，分析任务创建已被拦截。',
+    }
+  }
+
+  const task = await createAnalysisTask(title, skillName, skillId, orders)
   if (!task) {
     return { text: 'Error: 创建分析任务失败，请稍后重试' }
   }
@@ -805,7 +1410,6 @@ async function handleCreateAnalysisTask(
   }
 
   // Prefer result parameter with orders, then structured JSON from messages, then API base
-  const hasResultOrders = result && hasOrdersInResult(result)
   let jsonToSave: string | null = null
 
   if (hasResultOrders) {
@@ -895,7 +1499,20 @@ async function handleUpdateAnalysisTask(
     return { text: '更新失败：result 参数必须包含 orders 数组。' }
   }
 
-  const jsonToSave = JSON.stringify(result)
+  // Fetch existing contract numbers to prevent the LLM from expanding scope
+  const existingContracts = await fetchExistingOrderContracts(contextTaskId)
+  const incomingOrders = result.orders as Array<{ contractNumber?: string; contract_number?: string }>
+  const filteredOrders = incomingOrders.filter((o) => {
+    const cn = o.contractNumber || o.contract_number || ''
+    return existingContracts.has(cn)
+  })
+  const removedCount = incomingOrders.length - filteredOrders.length
+  if (removedCount > 0) {
+    console.log(`[AgentLoop] handleUpdateAnalysisTask: filtered out ${removedCount} new orders not in original analysis`)
+  }
+
+  const filteredResult = { ...result, orders: filteredOrders }
+  const jsonToSave = JSON.stringify(filteredResult)
   const saved = await saveStructuredResult(contextTaskId, jsonToSave)
   if (!saved) {
     return { text: `更新分析任务（ID: ${contextTaskId}）失败，请稍后重试。` }
@@ -908,7 +1525,43 @@ async function handleUpdateAnalysisTask(
     analysisTitle: String(args.title || skillName),
   })
 
-  return { text: `分析任务（ID: ${contextTaskId}）已更新。修正后的数据已保存，用户可在看板分析tab中查看更新后的内容。` }
+  const summary = removedCount > 0
+    ? `分析任务（ID: ${contextTaskId}）已更新。修正后的数据已保存。注：原分析包含 ${existingContracts.size} 个合同，更新请求中 ${removedCount} 个新合同被过滤（更新操作只允许修改已有合同的分析数据，不允许新增合同）。`
+    : `分析任务（ID: ${contextTaskId}）已更新。修正后的数据已保存，用户可在看板分析tab中查看更新后的内容。`
+  return { text: summary }
+}
+
+async function fetchExistingOrderContracts(taskId: string): Promise<Set<string>> {
+  try {
+    const BACKEND_API = process.env.BACKEND_API_URL || 'http://localhost:3001/api'
+    const res = await fetch(`${BACKEND_API}/analysis/${taskId}/full`)
+    if (!res.ok) return new Set()
+    const data = await res.json()
+    const orders = data?.orders || []
+    return new Set(orders.map((o: any) => o.contractNumber || o.contract_number || ''))
+  } catch {
+    return new Set()
+  }
+}
+
+async function filterNewOrders(taskId: string, jsonStr: string): Promise<string> {
+  try {
+    const existing = await fetchExistingOrderContracts(taskId)
+    if (existing.size === 0) return jsonStr
+    const parsed = JSON.parse(jsonStr)
+    if (!parsed.orders || !Array.isArray(parsed.orders)) return jsonStr
+    const incoming = parsed.orders as Array<{ contractNumber?: string; contract_number?: string }>
+    const filtered = incoming.filter((o) => {
+      const cn = o.contractNumber || o.contract_number || ''
+      return existing.has(cn)
+    })
+    if (filtered.length < incoming.length) {
+      console.log(`[AgentLoop] filterNewOrders: filtered out ${incoming.length - filtered.length} new orders for task ${taskId}`)
+    }
+    return JSON.stringify({ ...parsed, orders: filtered })
+  } catch {
+    return jsonStr
+  }
 }
 
 const GENERATE_TODOS_TOOL = {
@@ -1309,12 +1962,12 @@ async function fetchCabinetPackageData(ids: string[]): Promise<string> {
   }
 }
 
-async function createAnalysisTask(title: string, agentName: string, orders: string[]): Promise<{ id: string } | null> {
+async function createAnalysisTask(title: string, agentName: string, skillId: string, orders: string[]): Promise<{ id: string } | null> {
   try {
     const res = await fetch(`${BACKEND_API}/analysis`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, orders, agent: agentName }),
+      body: JSON.stringify({ title, orders, agent: agentName, skillId, skillName: agentName }),
     })
     if (!res.ok) return null
     return res.json()
@@ -1442,10 +2095,13 @@ export async function handleAgentMessage(
   todoStores.delete(sessionId)
   send(ws, { type: 'todo_list', sessionId, todos: [] })
 
-  // Send initial status
-  send(ws, { type: 'status', sessionId, status: 'thinking', skillName: skill.name, skillIcon: skill.icon, skillColor: skill.color, modelId })
+  // Send initial status with context window
+  const modelInfo = getAllModels().find((m) => m.id === modelId)
+  const contextWindow = modelInfo?.contextWindow
+  send(ws, { type: 'status', sessionId, status: 'thinking', skillName: skill.name, skillIcon: skill.icon, skillColor: skill.color, modelId, contextWindow })
 
-  const systemPrompt = buildSystemPrompt(skill, orders, currentPage)
+  const enableA2ui = shouldEnableA2ui(message, skill)
+  const systemPrompt = buildSystemPrompt(skill, orders, currentPage, enableA2ui)
   const session = getOrCreateSession(sessionId, skill.id, systemPrompt)
   const sessionKey = `${sessionId}:${skill.id}`
 
@@ -1480,10 +2136,7 @@ export async function handleAgentMessage(
   pushMessage(sessionKey, session, { role: 'user', content: userMessage })
   session.updatedAt = Date.now()
 
-  // Determine whether to enable A2UI visualization
-  const enableA2ui = shouldEnableA2ui(message, skill)
-
-  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'get_pending_todos', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'update_analysis_task', 'fetch_biz_data', 'search_material_stock'])
+  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'get_pending_todos', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'update_analysis_task', 'fetch_biz_data', 'fetch_orders', 'search_material_stock', 'mark_task_complete'])
     // Normalize function name for comparison (strip underscores, lowercase) to match built-in names
     const BUILTIN_NORMALIZED = new Set(Array.from(BUILTIN_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
     const MCP_TOOLS_RAW = mcp.getTools().map((t) => ({
@@ -1504,6 +2157,8 @@ export async function handleAgentMessage(
       SEND_NOTIFICATION_TOOL,
       LIST_NOTIFICATION_CHANNELS_TOOL,
       FETCH_BIZ_DATA_TOOL,
+      FETCH_ORDERS_TOOL,
+      MARK_TASK_COMPLETE_TOOL,
       SEARCH_MATERIAL_STOCK_TOOL,
       GET_PENDING_TODOS_TOOL,
       CREATE_ANALYSIS_TASK_TOOL,
@@ -1530,6 +2185,7 @@ export async function handleAgentMessage(
 
       // Stream LLM response
       let streamContent = ''
+      let reasoningContent = ''
       const accumulatedToolCalls: Map<number, { id: string; type: string; function: { name: string; arguments: string } }> = new Map()
 
       for await (const chunk of streamChat({
@@ -1542,11 +2198,19 @@ export async function handleAgentMessage(
           if (m.role === 'assistant' && m.toolCalls) {
             base.tool_calls = m.toolCalls
           }
+          if (m.role === 'assistant' && m.reasoningContent != null) {
+            base.reasoning_content = m.reasoningContent
+          }
           return base
         }),
         temperature: 0.7,
         tools: tools.length > 0 ? tools : undefined,
       }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl, signal: abortController.signal })) {
+
+        // Accumulate reasoning content (DeepSeek R1 thinking mode)
+        if (chunk.reasoningContent != null) {
+          reasoningContent += chunk.reasoningContent
+        }
 
         // Accumulate text content; stream to frontend incrementally, stripping TASK_COMPLETE markers
         if (chunk.content) {
@@ -1607,7 +2271,17 @@ export async function handleAgentMessage(
       }
 
       // Track tokens and check compaction after each LLM call
+      const willCompact = sessionStore?.shouldCompact(sessionKey)
+      if (willCompact) {
+        send(ws, { type: 'compacting', sessionId, phase: 'start' })
+      }
       await trackTokensAndCompact(sessionKey, session, totalTokens.prompt, modelId)
+      if (willCompact) {
+        send(ws, { type: 'compacting', sessionId, phase: 'done' })
+      }
+      // Send context usage update
+      const cumulativeTokens = sessionStore?.getCumulativeInputTokens(sessionKey) || totalTokens.prompt
+      send(ws, { type: 'context_update', sessionId, promptTokens: cumulativeTokens, contextWindow })
 
       // Process accumulated tool calls
       const toolCallsArr = Array.from(accumulatedToolCalls.values())
@@ -1617,6 +2291,7 @@ export async function handleAgentMessage(
         pushMessage(sessionKey, session, {
           role: 'assistant',
           content: cleanContent,
+          reasoningContent: reasoningContent || undefined,
           toolCalls: toolCallsArr,
         })
 
@@ -1709,7 +2384,7 @@ export async function handleAgentMessage(
 
           // Handle built-in create_analysis_task tool
           if (normalizedName === 'createanalysistask') {
-            const result = await handleCreateAnalysisTask(toolArgs, ws, sessionId, skill.name, orders || [], currentPage, session.messages, contextTaskId)
+            const result = await handleCreateAnalysisTask(toolArgs, ws, sessionId, skill.name, skill.id, orders || [], currentPage, session.messages, contextTaskId)
             if (result.taskId) {
               analysisId = result.taskId
             }
@@ -1812,6 +2487,40 @@ export async function handleAgentMessage(
             continue
           }
 
+          // Handle built-in fetch_orders tool
+          if (normalizedName === 'fetchorders') {
+            const resultText = await handleFetchOrders(toolArgs)
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: '订单数据已获取',
+            })
+            continue
+          }
+
+          // Handle built-in mark_task_complete tool
+          if (normalizedName === 'marktaskcomplete') {
+            const resultText = await handleMarkTaskComplete(toolArgs, ws, sessionId)
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: resultText.slice(0, 200),
+            })
+            continue
+          }
+
           // Handle built-in get_pending_todos tool
           if (normalizedName === 'getpendingtodos') {
             const resultText = await handleGetPendingTodos(toolArgs)
@@ -1908,7 +2617,7 @@ export async function handleAgentMessage(
       // Text already emitted above; save clean content for session
       const cleanFinal = streamContent.replace(/[\[<]TASK_COMPLETE:[^\s\[\]<>]+[\]>]?/g, '').trim()
       finalContent = cleanFinal || '抱歉，我未能生成有效的分析结果。'
-      pushMessage(sessionKey, session, { role: 'assistant', content: finalContent })
+      pushMessage(sessionKey, session, { role: 'assistant', content: finalContent, reasoningContent: reasoningContent || undefined })
       break
     }
 
@@ -1930,6 +2639,7 @@ export async function handleAgentMessage(
           const task = await createAnalysisTask(
             `${skill.name} — 履约分析`,
             skill.name,
+            skill.id,
             orders || [],
           )
           if (task) {
@@ -1950,10 +2660,6 @@ export async function handleAgentMessage(
     }
 
     const elapsed = Date.now() - startTime
-
-    // Look up context window for the used model
-    const modelInfo = getAllModels().find((m) => m.id === modelId)
-    const contextWindow = modelInfo?.contextWindow
 
     // Persist full chat history (all roles: user, assistant, tool; plus tool metadata)
     const chatMsgs = session.messages
@@ -2257,6 +2963,8 @@ function getToolLabel(name: string, args: Record<string, unknown>): string {
     case 'list_notification_channels': return `获取通知渠道列表`
     case 'get_pending_todos': return `获取待办任务清单`
     case 'fetch_biz_data': return `获取业务数据`
+    case 'fetch_orders': return `获取订单列表`
+    case 'mark_task_complete': return `标记任务完成: ${String(args.taskId || '')}`
     default: return `调用 ${name}`
   }
 }
@@ -2279,10 +2987,12 @@ export async function handleAgentHttpRequest(skillId: string, prompt: string): P
     LIST_NOTIFICATION_CHANNELS_TOOL,
     GET_PENDING_TODOS_TOOL,
     FETCH_BIZ_DATA_TOOL,
+    FETCH_ORDERS_TOOL,
+    MARK_TASK_COMPLETE_TOOL,
     SEARCH_MATERIAL_STOCK_TOOL,
   ]
 
-  const messages: Array<{ role: string; content: string; toolCalls?: any; tool_call_id?: string }> = [
+  const messages: Array<{ role: string; content: string; reasoning_content?: string; toolCalls?: any; tool_call_id?: string }> = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: prompt },
   ]
@@ -2297,6 +3007,9 @@ export async function handleAgentHttpRequest(skillId: string, prompt: string): P
         const base: any = { role: m.role, content: m.content }
         if (m.role === 'assistant' && m.toolCalls) {
           base.tool_calls = m.toolCalls
+        }
+        if (m.role === 'assistant' && m.reasoning_content != null) {
+          base.reasoning_content = m.reasoning_content
         }
         if (m.role === 'tool' && m.tool_call_id) {
           base.tool_call_id = m.tool_call_id
@@ -2321,6 +3034,7 @@ export async function handleAgentHttpRequest(skillId: string, prompt: string): P
     messages.push({
       role: 'assistant',
       content: response.content || '',
+      reasoning_content: response.reasoningContent != null ? response.reasoningContent : undefined,
       toolCalls: response.toolCalls,
     })
 
@@ -2344,6 +3058,8 @@ export async function handleAgentHttpRequest(skillId: string, prompt: string): P
         toolResult = await handleGetPendingTodos(toolArgs)
       } else if (normalizedName === 'fetchbizdata') {
         toolResult = await handleFetchBizData(toolArgs)
+      } else if (normalizedName === 'fetchorders') {
+        toolResult = await handleFetchOrders(toolArgs)
       } else if (normalizedName === 'searchmaterialstock') {
         toolResult = await handleSearchMaterialStock(toolArgs)
       } else {
@@ -2367,7 +3083,7 @@ function send(ws: WebSocket, payload: Record<string, unknown>) {
   }
 }
 
-function buildSystemPrompt(skill: Skill, orders?: string[], currentPage?: string): string {
+function buildSystemPrompt(skill: Skill, orders?: string[], currentPage?: string, enableA2ui?: boolean): string {
   let prompt = `你是「${skill.name}」。\n\n${skill.prompt}\n\n`
   prompt += `当前时间: ${new Date().toLocaleString('zh-CN')}\n`
   prompt += `当前页面: ${currentPage || '未知'}\n`
@@ -2381,13 +3097,14 @@ function buildSystemPrompt(skill: Skill, orders?: string[], currentPage?: string
   prompt += `- todo_write: 创建和管理任务列表\n`
   prompt += `- save_skill: 将新创建的 Skill 保存到文件系统（skillId、name、description、icon、color、prompt 六个必填参数，可选的 references 数组和 scripts 数组用于创建参考文档和脚本文件）\n`
   prompt += `- save_hook: 将新创建的 Hook 保存到文件系统（hookId、name、description、event、script 五个必填参数，enabled 和 matcher 可选）\n`
-  prompt += `- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）、taskId（可选，关联的分析任务ID）\n`
+  if (enableA2ui) prompt += '- show_analysis_result: 【严格限制】仅在用户明确要求"生成图表"、"可视化展示"、"看板"、"仪表盘"、"生成分析页面"等时才调用。普通文字分析、数据查询、状态检查等常规任务禁止调用此工具。参数：title（面板标题）、a2uiMessages（A2UI 消息数组）、taskId（可选，关联的分析任务ID）\n'
   prompt += `- create_analysis_task: 【仅限首页调用】只有当用户当前位于首页（currentPage === 'home'）时才能调用此工具。在分析任务详情页或其他页面时，禁止创建新的分析任务。参数：title（任务标题）、result（包含 orders 数组的JSON对象，每个order含 contractNumber/customer/amount/shipmentRatio/status/statusClass/sales/region/orderDate/problemCategories/deliveryTables 等字段）。\n`
   prompt += `- update_analysis_task: 更新已有分析任务的结构化数据。当用户在分析任务详情页（currentPage === 'analysis'）指出分析有误或需要修正时调用。参数：result（修正后的完整分析结果JSON，包含 orders 数组）。此工具覆盖现有数据，不会创建新任务。\n`
   prompt += `- generate_todos: 当用户消息以"请为以下合同生成待办清单"开头时（这是用户点击了界面按钮），必须调用此工具。其他场景仅在用户直接要求"生成待办清单"、"创建执行任务"时才调用。参数：taskId（分析任务ID）。注意：此工具运行较慢，会额外调用 LLM 生成待办\n`
   prompt += `- list_notification_channels: 列出所有已配置的通知渠道（飞书机器人、邮件、企微等）。在发送通知前先调用此工具确认可用的渠道。\n`
   prompt += `- send_notification: 通过通知渠道发送消息。参数：channelId（渠道ID，从 list_notification_channels 获取）、subject（标题，用于邮件）、message（消息正文，支持 Markdown 格式，飞书和企微机器人会渲染 Markdown）。\n`
   prompt += `- fetch_biz_data: 查询业务合同/装置/包/物料的层级数据。参数：contractId（合同ID）或 packageId（包ID）。\n`
+  prompt += `- fetch_orders: 获取销售订单列表，支持多种筛选条件。参数（均为可选）：brand（品牌）、salesperson（销售员）、shipMethod（发货方式：直发客户/集货发货/中转仓发货/海外直发）、receiptStatus（签收状态：未签收/部分签收/全部签收）、deliveryStatus（出库状态：待出库/已出库/部分出库）、isException（是否异常订单）、customer（客户主体）、pageSize（每页数量，默认100）。返回订单列表含订单编号、客户、品牌、金额、发货率、签收率、发货方式、异常标记等字段。\n`
   prompt += `- search_material_stock: 按物料编码搜索所有合同中的库存分布。参数：materialCode（物料编码如DLQ-001）。返回每个合同的库存、在途、优先级、富余量(surplus)，用于判断调拨可行性。\n`
   prompt += `- get_pending_todos: 获取所有未完成的待办任务清单（含分析任务生成的待办和执行任务中的未完结待办）。按负责人分组，包含任务类别、描述、优先级、截止日期。可选参数 assignee 按人筛选。\n\n`
 

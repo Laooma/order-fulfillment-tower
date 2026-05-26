@@ -10,6 +10,8 @@ export interface ChatPageConfig {
   tabs?: { key: string; label: string; hidden?: boolean }[]
   activeTab?: string
   lockAgent?: boolean
+  defaultSkillId?: string
+  defaultSkillName?: string
   onTabChange?: (tab: string) => void
   onAnalysisNavigate?: (path: string) => void
   onAnalysisComplete?: (analysisId: string) => void

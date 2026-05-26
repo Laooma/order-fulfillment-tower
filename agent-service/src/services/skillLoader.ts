@@ -91,7 +91,10 @@ export function loadSkills(): Skill[] {
     let skillId: string
     let skillMdPath: string
 
-    if (entry.isDirectory()) {
+    // isDirectory() returns false for symlinks in Node 20+; resolve via stat
+    const isDir = entry.isDirectory()
+      || (entry.isSymbolicLink() && (() => { try { return fs.statSync(path.join(SKILLS_DIR, entry.name)).isDirectory() } catch { return false } })())
+    if (isDir) {
       skillId = entry.name
       skillMdPath = path.join(SKILLS_DIR, skillId, 'SKILL.md')
       if (!fs.existsSync(skillMdPath)) continue

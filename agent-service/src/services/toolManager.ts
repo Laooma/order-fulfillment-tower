@@ -158,6 +158,40 @@ const BUILTIN_TOOLS: ToolConfig[] = [
       required: ['taskId'],
     },
   },
+  {
+    name: 'mark_task_complete',
+    description: '验证并标记执行任务为已完成。先检查关联订单数据确认任务是否真正完成，然后将任务标记为done并通过飞书机器人通知相关人员，附带分析任务深度链接',
+    enabled: true,
+    source: 'built-in',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: '执行任务ID（analysis_todos表的id）' },
+        assigneeNote: { type: 'string', description: '待办人填写的完成备注说明' },
+      },
+      required: ['taskId'],
+    },
+  },
+  {
+    name: 'fetch_orders',
+    description: '获取销售订单列表，支持按品牌、销售员、签收状态、发货状态、异常标记等筛选，可用于生成履约看板仪表盘',
+    enabled: true,
+    source: 'built-in',
+    parameters: {
+      type: 'object',
+      properties: {
+        brand: { type: 'string', description: '品牌主体，如"产品品牌A"' },
+        salesperson: { type: 'string', description: '销售员姓名' },
+        shipMethod: { type: 'string', description: '发货方式：直发客户/集货发货/中转仓发货/海外直发' },
+        receiptStatus: { type: 'string', description: '签收状态：未签收/部分签收/全部签收' },
+        deliveryStatus: { type: 'string', description: '出库状态：待出库/已出库/部分出库' },
+        isException: { type: 'boolean', description: '是否异常' },
+        customer: { type: 'string', description: '客户主体名称' },
+        pageSize: { type: 'number', description: '每页数量，默认100' },
+      },
+      required: [],
+    },
+  },
 ]
 
 function loadOverrides(): Record<string, ToolOverride> {

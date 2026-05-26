@@ -10,9 +10,9 @@ const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   preserveRecentMessages: parseInt(process.env.COMPACTION_PRESERVE_RECENT || '4', 10),
   maxEstimatedTokens: parseInt(process.env.COMPACTION_MAX_ESTIMATED_TOKENS || '10000', 10),
   triggerTokenThreshold: parseInt(process.env.COMPACTION_TRIGGER_TOKENS || '100000', 10),
-  maxSummaryChars: 1200,
-  maxSummaryLines: 24,
-  maxLineChars: 160,
+  maxSummaryChars: 2000,
+  maxSummaryLines: 40,
+  maxLineChars: 200,
 }
 
 const SESSION_TTL_HOURS = parseInt(process.env.SESSION_TTL_HOURS || '24', 10)
@@ -65,6 +65,7 @@ export class SessionStore {
         session_key TEXT NOT NULL,
         role TEXT NOT NULL CHECK(role IN ('user','assistant','system','tool','compaction')),
         content TEXT DEFAULT '',
+        reasoning_content TEXT DEFAULT '',
         tool_call_id TEXT DEFAULT '',
         tool_calls_json TEXT DEFAULT '',
         seq INTEGER NOT NULL DEFAULT 0,
@@ -95,6 +96,12 @@ export class SessionStore {
       );
       CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id, task_id);
     `)
+
+    // Migration: add reasoning_content column for existing databases
+    const columns = this.db.prepare("PRAGMA table_info(agent_messages)").all() as any[]
+    if (!columns.some((c: any) => c.name === 'reasoning_content')) {
+      this.db.exec("ALTER TABLE agent_messages ADD COLUMN reasoning_content TEXT DEFAULT ''")
+    }
   }
 
   // ── Session CRUD ──
@@ -164,26 +171,30 @@ export class SessionStore {
     const seq = (maxSeq?.max_seq ?? -1) + 1
     const role = message.role
     const content = this.truncateField(message.content)
+    const reasoningContent = message.reasoningContent || ''
     const toolCallId = message.toolCallId || ''
     const toolCallsJson = message.toolCalls ? JSON.stringify(message.toolCalls) : ''
 
     this.db.prepare(`
-      INSERT INTO agent_messages (session_key, role, content, tool_call_id, tool_calls_json, seq)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(key, role, content, toolCallId, toolCallsJson, seq)
+      INSERT INTO agent_messages (session_key, role, content, reasoning_content, tool_call_id, tool_calls_json, seq)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(key, role, content, reasoningContent, toolCallId, toolCallsJson, seq)
 
     this.updateSessionTimestamp(key)
   }
 
   loadMessages(key: string): Session['messages'] {
     const rows = this.db.prepare(
-      'SELECT role, content, tool_call_id, tool_calls_json FROM agent_messages WHERE session_key = ? ORDER BY seq ASC'
+      'SELECT role, content, reasoning_content, tool_call_id, tool_calls_json FROM agent_messages WHERE session_key = ? ORDER BY seq ASC'
     ).all(key) as any[]
 
     return rows.map(row => {
       const msg: Session['messages'][0] = {
         role: row.role as Session['messages'][0]['role'],
         content: row.content,
+      }
+      if (row.reasoning_content) {
+        msg.reasoningContent = row.reasoning_content
       }
       if (row.tool_call_id) {
         msg.toolCallId = row.tool_call_id
@@ -374,48 +385,55 @@ export class SessionStore {
     const sortedTools = Array.from(toolNames).sort()
 
     const lines: string[] = [
-      'Conversation summary:',
-      `- Scope: ${messages.length} earlier messages compacted (user=${userCount}, assistant=${assistantCount}, tool=${toolCount}).`,
+      '1. Primary Request and Intent:',
+      `- ${messages.length} messages compacted (user=${userCount}, assistant=${assistantCount}, tool=${toolCount}).`,
     ]
 
     if (sortedTools.length > 0) {
-      lines.push(`- Tools mentioned: ${sortedTools.join(', ')}.`)
+      lines.push(`- Tools used: ${sortedTools.join(', ')}.`)
     }
 
-    // Recent user requests (max 3)
-    const userRequests = messages
-      .filter(m => m.role === 'user' && m.content.trim())
-      .slice(-3)
-      .map(m => this.truncateSummary(m.content, 160))
-    if (userRequests.length > 0) {
-      lines.push('- Recent user requests:')
-      for (const r of userRequests) {
-        lines.push(`  - ${r}`)
-      }
+    // 2. Key Technical Concepts
+    lines.push('2. Key Technical Concepts:')
+    const concepts = this.extractConcepts(messages)
+    if (concepts.length > 0) {
+      for (const c of concepts.slice(0, 6)) lines.push(`- ${c}`)
+    } else {
+      lines.push('- (see timeline below)')
     }
 
-    // Pending work
-    const pendingWork = this.inferPendingWork(messages)
-    if (pendingWork.length > 0) {
-      lines.push('- Pending work:')
-      for (const item of pendingWork) {
-        lines.push(`  - ${item}`)
-      }
-    }
-
-    // Key files
+    // 3. Files and Code Sections
+    lines.push('3. Files and Code Sections:')
     const keyFiles = this.extractKeyFiles(messages)
     if (keyFiles.length > 0) {
-      lines.push(`- Key files referenced: ${keyFiles.join(', ')}.`)
+      for (const f of keyFiles.slice(0, 8)) lines.push(`- ${f}`)
+    } else {
+      lines.push('- (no source files referenced)')
     }
 
-    // Current work
+    // 6. All user messages (condensed)
+    lines.push('6. All user messages:')
+    const userMsgs = messages.filter(m => m.role === 'user' && m.content.trim())
+    for (const m of userMsgs.slice(-8)) {
+      lines.push(`- ${this.truncateSummary(m.content, 160)}`)
+    }
+
+    // 7. Pending Tasks
+    const pendingWork = this.inferPendingWork(messages)
+    if (pendingWork.length > 0) {
+      lines.push('7. Pending Tasks:')
+      for (const item of pendingWork) {
+        lines.push(`- ${item}`)
+      }
+    }
+
+    // 8. Current Work
     const currentWork = this.inferCurrentWork(messages)
     if (currentWork) {
-      lines.push(`- Current work: ${currentWork}`)
+      lines.push(`8. Current Work: ${currentWork}`)
     }
 
-    // Timeline
+    // Key timeline (condensed)
     lines.push('- Key timeline:')
     for (const m of messages) {
       const content = this.truncateSummary(m.content, 80)
@@ -515,6 +533,30 @@ export class SessionStore {
       }
     }
     return null
+  }
+
+  private extractConcepts(messages: Session['messages']): string[] {
+    const conceptPatterns = [
+      /\b(WebSocket|REST|API|HTTP|GraphQL|gRPC)\b/gi,
+      /\b(TypeScript|JavaScript|React|Node\.js|Python|SQL|CSS|HTML)\b/gi,
+      /\b(compaction|token|context|window|threshold|summariz|A2UI|MCP|LLM|session)\b/gi,
+      /\b(database|schema|migration|index|query|transaction)\b/gi,
+      /\b(auth|permission|role|session|token|OAuth|JWT)\b/gi,
+      /\b(component|store|hook|state|render|effect)\b/gi,
+    ]
+    const concepts = new Set<string>()
+    for (const m of messages) {
+      for (const pattern of conceptPatterns) {
+        const matches = m.content.match(pattern)
+        if (matches) {
+          for (const match of matches) {
+            const capitalized = match.charAt(0).toUpperCase() + match.slice(1).toLowerCase()
+            concepts.add(capitalized)
+          }
+        }
+      }
+    }
+    return Array.from(concepts)
   }
 
   // ── Summary compression (from Claude Code summary_compression.rs) ──
@@ -677,8 +719,8 @@ export class SessionStore {
 
   private syncMessagesToDb(key: string, messages: Session['messages']): void {
     const insert = this.db.prepare(`
-      INSERT INTO agent_messages (session_key, role, content, tool_call_id, tool_calls_json, seq)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO agent_messages (session_key, role, content, reasoning_content, tool_call_id, tool_calls_json, seq)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
     for (let i = 0; i < messages.length; i++) {
       const m = messages[i]
@@ -686,6 +728,7 @@ export class SessionStore {
         key,
         m.role,
         this.truncateField(m.content),
+        m.reasoningContent || '',
         m.toolCallId || '',
         m.toolCalls ? JSON.stringify(m.toolCalls) : '',
         i,
@@ -709,8 +752,11 @@ export class SessionStore {
   }
 }
 
-const COMPACT_PREAMBLE = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n'
-const COMPACT_RECENT_NOTE = 'Recent messages are preserved verbatim.'
+const COMPACT_PREAMBLE = `[The conversation up to this point has been summarized to preserve context. The summary below captures all completed work, key decisions, errors/fixes, and pending tasks. Read it before continuing — it provides the full background needed to resume work seamlessly.]
+
+`
+
+const COMPACT_RECENT_NOTE = `[The ${DEFAULT_COMPACTION_CONFIG.preserveRecentMessages} most recent messages above this line are preserved verbatim. The summary below covers all earlier messages.]`
 
 // Token estimation helper
 export function estimateTokens(text: string): number {

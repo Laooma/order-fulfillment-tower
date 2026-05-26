@@ -70,13 +70,21 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const [showModelDropdown, setShowModelDropdown] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [pendingAnalysis, setPendingAnalysis] = useState<{ id: string; redirect: string } | null>(null)
+  const [pendingTodoSuggestion, setPendingTodoSuggestion] = useState<{
+    todos: Array<{ category: string; description: string; priority: string; assignee?: string; dueDate?: string; taskType?: string; contractNumber?: string }>
+    analysisId?: string
+  } | null>(null)
   const processedWsCount = useRef(0)
   const [streamStatus, setStreamStatus] = useState<'idle' | 'thinking' | 'calling_tool' | 'responding'>('idle')
   const [statusMessage, setStatusMessage] = useState('')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [tokenStats, setTokenStats] = useState<{ total: number; prompt: number; completion: number } | null>(null)
   const [contextWindow, setContextWindow] = useState<number | null>(null)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [contextUsage, setContextUsage] = useState(0)
+  const [isCompacting, setIsCompacting] = useState(false)
+  const lastActivityRef = useRef(Date.now())
+  const [idleDuration, setIdleDuration] = useState(0)
+  const [errorMessage, setErrorMessage] = useState<{ title: string; detail: string } | null>(null)
   const [todos, setTodos] = useState<TodoItem[]>([])
   const [taskOutputs, setTaskOutputs] = useState<Record<string, string>>({})
   const [incompleteTaskWarnings, setIncompleteTaskWarnings] = useState<string[]>([])
@@ -202,6 +210,17 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       .finally(() => setSkillsLoading(false))
   }, [])
 
+  // Auto-switch agent when pageConfig.defaultSkillId changes
+  useEffect(() => {
+    const skillId = pageConfig?.defaultSkillId
+    if (!skillId || skills.length === 0) return
+    const matched = skills.find((s) => s.id === skillId)
+    if (matched) {
+      setActiveAgent(matched)
+      // Don't lock — user can still switch agents manually
+    }
+  }, [pageConfig?.defaultSkillId, skills])
+
   // Persist user preferences to localStorage
   useEffect(() => {
     if (selectedModelId) {
@@ -227,6 +246,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
 
     for (const msg of toProcess) {
       if (msg.type === 'chunk' && msg.content !== undefined) {
+        lastActivityRef.current = Date.now()
         const chunkContent = msg.content
         currentResponseRef.current += chunkContent
         setMessages((prev) => {
@@ -248,10 +268,12 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         }
       }
       if (msg.type === 'status') {
+        lastActivityRef.current = Date.now()
         const prevStatus = streamStatus
         if (msg.status) {
           setStreamStatus(msg.status)
         }
+        if (msg.contextWindow) setContextWindow(msg.contextWindow)
         // Flush thinking content when leaving 'thinking' phase
         if (prevStatus === 'thinking' && msg.status && msg.status !== 'thinking') {
           const thinking = thinkingContentRef.current
@@ -268,6 +290,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         }
       }
       if (msg.type === 'tool_call') {
+        lastActivityRef.current = Date.now()
         const label = msg.toolLabel || msg.toolName || ''
         const newTc: ToolCallRecord = { name: msg.toolName || '', label, done: false }
         setToolCallHistory((prev) => [...prev, newTc])
@@ -286,6 +309,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         })
       }
       if (msg.type === 'tool_result') {
+        lastActivityRef.current = Date.now()
         setToolCallHistory((prev) => {
           const updated = [...prev]
           const last = updated.reverse().find((t) => !t.done)
@@ -338,6 +362,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
             completion: msg.completionTokens || 0,
           })
         }
+        if (msg.promptTokens != null) setContextUsage(msg.promptTokens)
         if (msg.contextWindow) setContextWindow(msg.contextWindow)
         if (msg.analysisId && msg.redirect) {
           setPendingAnalysis({ id: msg.analysisId, redirect: msg.redirect })
@@ -349,6 +374,15 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
           setIncompleteTaskWarnings(msg.incompleteTasks)
         }
       }
+      if (msg.type === 'context_update') {
+        lastActivityRef.current = Date.now()
+        if (msg.promptTokens != null) setContextUsage(msg.promptTokens)
+        if (msg.contextWindow) setContextWindow(msg.contextWindow)
+      }
+      if (msg.type === 'compacting') {
+        if (msg.phase === 'start') setIsCompacting(true)
+        else setIsCompacting(false)
+      }
       if (msg.type === 'todo_list' && msg.todos) {
         setTodos(msg.todos)
         setTaskOutputs((prev) => {
@@ -358,6 +392,12 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
             if (prev[id]) next[id] = prev[id]
           }
           return next
+        })
+      }
+      if (msg.type === 'todo_suggestion' && msg.suggestedTodos && msg.suggestedTodos.length > 0) {
+        setPendingTodoSuggestion({
+          todos: msg.suggestedTodos,
+          analysisId: msg.analysisId,
         })
       }
       if (msg.type === 'task_boundary') {
@@ -386,7 +426,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         setStreamStatus('idle')
         setStatusMessage('')
         thinkingContentRef.current = ''
-        setErrorMessage(msg.errorMessage || msg.content || '请求失败')
+        setErrorMessage({ title: msg.content || '请求失败', detail: msg.errorMessage || msg.content || '' })
         if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null }
         // Notify analysis page of error so it can reset generatingTodos state
         if (msg.taskId && onAnalysisComplete) {
@@ -455,6 +495,18 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     el.scrollTop = el.scrollHeight
   }, [editorBlocks])
 
+  // Track idle time for status bar color transitions
+  useEffect(() => {
+    if (streamStatus === 'idle') {
+      setIdleDuration(0)
+      return
+    }
+    const timer = setInterval(() => {
+      setIdleDuration(Date.now() - lastActivityRef.current)
+    }, 500)
+    return () => clearInterval(timer)
+  }, [streamStatus])
+
   // Reset scroll state when sending a new message
   useEffect(() => {
     if (isSending) {
@@ -519,6 +571,9 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const doSend = useCallback((message: string, opts?: { taskId?: string; orders?: string[]; cabinetPackages?: string[] }) => {
     if (isSending) return
     setIsSending(true)
+    lastActivityRef.current = Date.now()
+    setContextUsage(0)
+    setIsCompacting(false)
     setStreamStatus('thinking')
     setStatusMessage('')
     setElapsedMs(0)
@@ -556,7 +611,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     setAttachedImages([])
     if (fileInputRef.current) fileInputRef.current.value = ''
     api.chat.save(sessionId, 'user', fullMessage).catch(() => {})
-    wsSend({
+    const sent = wsSend({
       type: 'chat',
       sessionId,
       skillId: autoAssign ? undefined : activeAgent?.id,
@@ -569,6 +624,11 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       images,
       currentPage: pageConfig?.page || 'unknown',
     })
+    if (!sent) {
+      setIsSending(false)
+      setStreamStatus('idle')
+      setErrorMessage({ title: '连接失败', detail: 'WebSocket 未连接，请刷新页面后重试' })
+    }
   }, [isSending, autoAssign, activeAgent, selectedModelId, wsSend, onClearOrders, onClearCabinets, sessionId, quotedMessage, attachedImages, contextTaskId])
 
   // Register sendMessage in the store so pages can trigger sends programmatically
@@ -630,6 +690,10 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     setMessagesLoading(false)
     needsNewMessageRef.current = false
     setIncompleteTaskWarnings([])
+    setContextUsage(0)
+    setContextWindow(null)
+    setIsCompacting(false)
+    setPendingTodoSuggestion(null)
   }
 
   const [sessionList, setSessionList] = useState<Array<{ id: string; title: string; updated_at: string }>>([])
@@ -649,6 +713,8 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
     setStatusMessage('')
     setTokenStats(null)
     setErrorMessage(null)
+    setContextUsage(0)
+    setContextWindow(null)
     currentResponseRef.current = ''
     thinkingContentRef.current = ''
     setExpandedThinking(new Set())
@@ -692,6 +758,25 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         <div className="panel-title">
           <span className="panel-title-dot" />
           AI专属助手
+          {showChat && contextWindow && contextWindow > 0 && (
+            <span className={cn('context-indicator', isCompacting && 'compacting', contextUsage > contextWindow * 0.95 ? 'danger' : contextUsage > contextWindow * 0.8 ? 'warning' : '')}>
+              {isCompacting ? (
+                <>
+                  <span className="context-bar">
+                    <span className="context-bar-fill compacting" />
+                  </span>
+                  压缩中…
+                </>
+              ) : (
+                <>
+                  <span className="context-bar">
+                    <span className="context-bar-fill" style={{ width: `${Math.min(100, Math.round((contextUsage / contextWindow) * 100))}%` }} />
+                  </span>
+                  {Math.round((contextUsage / contextWindow) * 100)}%
+                </>
+              )}
+            </span>
+          )}
         </div>
         {tabs && onTabChange && (
           <div className="panel-tabs">
@@ -1009,14 +1094,79 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                   </svg>
                   <span>分析任务已生成</span>
                 </div>
-                <div className="analysis-confirm-id">{pendingAnalysis.id}</div>
+                <div
+                  className="analysis-confirm-id clickable"
+                  onClick={() => { navigate(pendingAnalysis.redirect); setPendingAnalysis(null) }}
+                  title="点击查看分析详情"
+                >{pendingAnalysis.id}</div>
                 <div className="analysis-confirm-desc">AI 已完成订单履约分析，识别出相关卡点与风险。可在「历史分析」页面查看详情。</div>
-                <button
-                  className="analysis-confirm-btn"
-                  onClick={() => setPendingAnalysis(null)}
-                >
-                  知道了
-                </button>
+                <div className="analysis-confirm-actions">
+                  <button
+                    className="analysis-confirm-btn primary"
+                    onClick={() => { navigate(pendingAnalysis.redirect); setPendingAnalysis(null) }}
+                  >
+                    查看详情
+                  </button>
+                  <button
+                    className="analysis-confirm-btn"
+                    onClick={() => setPendingAnalysis(null)}
+                  >
+                    知道了
+                  </button>
+                </div>
+              </div>
+            )}
+            {pendingTodoSuggestion && (
+              <div className="analysis-confirm">
+                <div className="analysis-confirm-header">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M2 4a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm3 1v2h6V5H5zm0 4v2h6V9H5z" />
+                  </svg>
+                  <span>是否创建成新的待办</span>
+                </div>
+                <div className="analysis-confirm-desc">
+                  系统建议创建以下待办任务：
+                  <ul style={{ marginTop: 8, paddingLeft: 16, fontSize: 12 }}>
+                    {pendingTodoSuggestion.todos.map((t, i) => (
+                      <li key={i}>{t.description}（{t.category} · {t.assignee || '未分配'}）</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="analysis-confirm-actions">
+                  <button
+                    className="analysis-confirm-btn primary"
+                    onClick={async () => {
+                      if (pendingTodoSuggestion.analysisId) {
+                        try {
+                          await api.analysis.saveTodos(
+                            pendingTodoSuggestion.analysisId,
+                            pendingTodoSuggestion.todos.map((t) => ({
+                              contractNumber: t.contractNumber || '',
+                              category: t.category,
+                              description: t.description,
+                              priority: t.priority,
+                              assignee: t.assignee || '',
+                              dueDate: t.dueDate || '',
+                              status: 'pending',
+                              taskType: t.taskType || 'manual',
+                              skillId: activeAgent?.id || '',
+                              skillName: activeAgent?.name || '',
+                            }))
+                          )
+                        } catch { /* ignore */ }
+                      }
+                      setPendingTodoSuggestion(null)
+                    }}
+                  >
+                    创建待办
+                  </button>
+                  <button
+                    className="analysis-confirm-btn"
+                    onClick={() => setPendingTodoSuggestion(null)}
+                  >
+                    不需要
+                  </button>
+                </div>
               </div>
             )}
             </div>
@@ -1047,7 +1197,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
 
       {/* Status bar */}
       {showChat && streamStatus !== 'idle' && (
-        <div className="panel-status-bar">
+        <div className={cn('panel-status-bar', idleDuration >= 30000 ? 'stalled' : idleDuration >= 15000 ? 'timeout' : '')}>
           <div className="psb-left">
             <span className={cn('psb-status-dot', streamStatus)} />
             <span className="psb-status-text">
@@ -1071,11 +1221,6 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
           <div className="psb-left">
             <span className="psb-check">&#10003;</span>
             <span className="psb-status-text">完成</span>
-            {contextWindow && tokenStats.prompt > 0 && (
-              <span className="psb-context" title={`上下文用量: ${formatTokens(tokenStats.prompt)} / ${formatTokens(contextWindow)}`}>
-                {formatTokens(tokenStats.prompt)}/{formatTokens(contextWindow)}
-              </span>
-            )}
           </div>
           <div className="psb-right">
             <span className="psb-tokens">{formatTokens(tokenStats.total)} tokens</span>
@@ -1085,10 +1230,15 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       )}
       {showChat && errorMessage && (
         <div className="panel-error-bar">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style={{ flexShrink: 0 }}>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style={{ flexShrink: 0, marginTop: 1 }}>
             <path d="M6 0a6 6 0 100 12A6 6 0 006 0zm0 9a.75.75 0 110-1.5.75.75 0 010 1.5zm0-2.25a.75.75 0 01-.75-.75V3a.75.75 0 011.5 0v3a.75.75 0 01-.75.75z" />
           </svg>
-          <span className="panel-error-text">{errorMessage}</span>
+          <span className="panel-error-text">
+            <span className="panel-error-title">{errorMessage.title}</span>
+            {errorMessage.detail && errorMessage.detail !== errorMessage.title && (
+              <span className="panel-error-detail">{errorMessage.detail}</span>
+            )}
+          </span>
           <button className="panel-error-dismiss" onClick={() => setErrorMessage(null)} title="关闭">
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
               <path d="M1.5 1.5l7 7m-7 0l7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

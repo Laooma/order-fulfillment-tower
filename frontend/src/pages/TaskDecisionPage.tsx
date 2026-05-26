@@ -56,6 +56,8 @@ export default function TaskDecisionPage() {
     setPageConfig({
       page: 'task',
       taskId: id,
+      defaultSkillId: taskData?.skillId || undefined,
+      defaultSkillName: taskData?.skillName || undefined,
       onA2uiSurface: (data: { title: string; messages: unknown[] }) => {
         a2uiStore.setSurface(data.title, data.messages as any[])
         navigate('/a2ui')
@@ -64,7 +66,7 @@ export default function TaskDecisionPage() {
     return () => {
       setPageConfig(null)
     }
-  }, [id, setPageConfig, navigate, a2uiStore])
+  }, [id, taskData?.skillId, taskData?.skillName, setPageConfig, navigate, a2uiStore])
 
   return (
     <TaskDetailLayout

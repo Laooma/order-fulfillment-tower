@@ -4,6 +4,7 @@ import { Search, ChevronDown, X } from 'lucide-react'
 import SubNav from '../components/SubNav'
 import { api } from '../lib/api'
 import { useAuthStore } from '../stores/authStore'
+import { useChatStore } from '../stores/chatStore'
 import type { TaskType, TaskStatus, BusinessType, Priority } from '../types'
 
 let allMockTasks: any[] = []
@@ -119,6 +120,7 @@ function FilterGroup({ title, options, activeValue, onChange, showSearch, search
 export default function TaskListPage() {
   const navigate = useNavigate()
   const hasOperation = useAuthStore((s) => s.hasOperation)
+  const sendMessage = useChatStore((s) => s.sendMessage)
   const [activeCategory, setActiveCategory] = useState<BusinessType | 'all'>('all')
   const [filterContract, setFilterContract] = useState('all')
   const [filterType, setFilterType] = useState<TaskType | 'all'>('all')
@@ -259,6 +261,11 @@ export default function TaskListPage() {
     setActiveCategory(key as BusinessType | 'all')
     setFilterContract('all')
     setCurrentPage(1)
+  }
+
+  const handleMarkComplete = (task: { id: string; title: string }) => {
+    if (!sendMessage) return
+    sendMessage(`请使用 mark_task_complete 工具验证任务 ${task.id}（${task.title}）是否真正完成，验证后发送飞书通知`)
   }
 
   const quickFilterChips = [
@@ -531,15 +538,27 @@ export default function TaskListPage() {
                         >
                           处理
                         </button>
-                        {hasOperation('update_todos') && (
+                        {task.status !== 'done' && (
                           <>
                             <span style={{ color: 'var(--color-border)', margin: '0 6px' }}>|</span>
                             <button
                               className="td-contract"
-                              style={{ fontSize: '12px', ...(task.status === 'overdue' ? { color: 'var(--color-danger)' } : {}) }}
+                              style={{ fontSize: '12px', color: 'var(--color-success)' }}
+                              onClick={() => handleMarkComplete(task)}
                             >
-                              {task.status === 'overdue' ? '催办' : '转交'}
+                              标记完成
                             </button>
+                            {hasOperation('update_todos') && (
+                              <>
+                                <span style={{ color: 'var(--color-border)', margin: '0 6px' }}>|</span>
+                                <button
+                                  className="td-contract"
+                                  style={{ fontSize: '12px', ...(task.status === 'overdue' ? { color: 'var(--color-danger)' } : {}) }}
+                                >
+                                  {task.status === 'overdue' ? '催办' : '转交'}
+                                </button>
+                              </>
+                            )}
                           </>
                         )}
                       </div>

@@ -161,6 +161,17 @@ export const api = {
   bizMaterials: {
     get: (id: string) => request<any>(`/biz-contracts/materials/${id}`),
     dailyBalance: (id: string) => request<any>(`/biz-contracts/materials/${id}/daily-balance`),
+    search: (code: string) => request<any>(`/biz-contracts/materials/search?code=${encodeURIComponent(code)}`),
+    upsert: (data: { contractNo: string; materialCode: string; materialName?: string; currentStock: number; requiredQty?: number }) =>
+      request<any>('/biz-contracts/materials/upsert', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateStock: (id: string, currentStock: number) =>
+      request<{ success: boolean; id: string; current_stock: number; shortage_qty: number }>(`/biz-contracts/materials/${id}/update-stock`, {
+        method: 'PUT',
+        body: JSON.stringify({ current_stock: currentStock }),
+      }),
   },
   tasks: {
     list: (params?: Record<string, string>) =>

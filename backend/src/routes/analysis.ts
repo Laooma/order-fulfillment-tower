@@ -173,15 +173,15 @@ router.put('/:id/card/:problemId', (req, res) => {
 
 // POST /api/analysis - create task
 router.post('/', requireOperation('create_analysis'), (req, res) => {
-  const { title, orders, agent } = req.body
+  const { title, orders, agent, skillId, skillName } = req.body
   const id = `T${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${String(Math.floor(Math.random() * 900) + 100).padStart(3, '0')}`
 
   try {
     const db = getDb()
     db.prepare(`
-      INSERT INTO analysis_tasks (id, title, description, agent, initiator, status, created_at, completed_at)
-      VALUES (?, ?, ?, ?, '系统', 'analyzing', ?, '')
-    `).run(id, title || '新分析任务', `分析 ${orders?.length || 0} 个订单的履约状态`, agent || 'AI智能体', new Date().toLocaleString('zh-CN'))
+      INSERT INTO analysis_tasks (id, title, description, agent, initiator, status, created_at, completed_at, skill_id, skill_name)
+      VALUES (?, ?, ?, ?, '系统', 'analyzing', ?, '', ?, ?)
+    `).run(id, title || '新分析任务', `分析 ${orders?.length || 0} 个订单的履约状态`, agent || 'AI智能体', new Date().toLocaleString('zh-CN'), skillId || '', skillName || '')
   } catch (err) {
     console.error('[Analysis] Create error:', err)
   }
@@ -293,8 +293,8 @@ router.post('/:id/todos', (req, res) => {
     const db = getDb()
 
     const insertTodo = db.prepare(`
-      INSERT OR REPLACE INTO analysis_todos (id, order_id, category, description, priority, assignee, due_date, status, task_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO analysis_todos (id, order_id, category, description, priority, assignee, due_date, status, task_type, skill_id, skill_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     const getOrder = db.prepare(`
@@ -314,7 +314,9 @@ router.post('/:id/todos', (req, res) => {
         todo.assignee || '',
         todo.dueDate || '',
         todo.status || 'pending',
-        todo.taskType || 'manual'
+        todo.taskType || 'manual',
+        todo.skillId || '',
+        todo.skillName || ''
       )
       count++
     }

@@ -95,7 +95,8 @@ router.get('/materials/search', (req, res) => {
     const code = req.query.code as string
     if (!code) { res.status(400).json({ error: 'code query param is required' }); return }
 
-    const materials = db.prepare(`
+    // Try exact match first
+    let materials = db.prepare(`
       SELECT bm.*, bp.package_name, bp.package_code, bp.planned_production, bp.status as pkg_status,
              bd.device_name, bd.device_code, bc.id as contract_id, bc.contract_no, bc.customer, bc.amount, bc.priority
       FROM biz_materials bm
@@ -106,12 +107,46 @@ router.get('/materials/search', (req, res) => {
       ORDER BY bc.priority DESC, bm.current_stock DESC
     `).all(code) as any[]
 
+    // If no exact match, try LIKE search on material_code and device_code
+    if (materials.length === 0) {
+      const likePattern = `%${code}%`
+      materials = db.prepare(`
+        SELECT bm.*, bp.package_name, bp.package_code, bp.planned_production, bp.status as pkg_status,
+               bd.device_name, bd.device_code, bc.id as contract_id, bc.contract_no, bc.customer, bc.amount, bc.priority
+        FROM biz_materials bm
+        JOIN biz_packages bp ON bm.package_id = bp.id
+        JOIN biz_devices bd ON bp.device_id = bd.id
+        JOIN biz_contracts bc ON bd.contract_id = bc.id
+        WHERE bm.material_code LIKE ? OR bd.device_code LIKE ?
+        ORDER BY bc.priority DESC, bm.current_stock DESC
+      `).all(likePattern, likePattern) as any[]
+    }
+
+    // If still nothing, try partial match on the first segment (e.g. "SDR" from "SDR-240")
+    if (materials.length === 0 && code.includes('-')) {
+      const firstSegment = code.split('-')[0]
+      if (firstSegment.length >= 2) {
+        const prefixPattern = `${firstSegment}%`
+        materials = db.prepare(`
+          SELECT bm.*, bp.package_name, bp.package_code, bp.planned_production, bp.status as pkg_status,
+                 bd.device_name, bd.device_code, bc.id as contract_id, bc.contract_no, bc.customer, bc.amount, bc.priority
+          FROM biz_materials bm
+          JOIN biz_packages bp ON bm.package_id = bp.id
+          JOIN biz_devices bd ON bp.device_id = bd.id
+          JOIN biz_contracts bc ON bd.contract_id = bc.id
+          WHERE bm.material_code LIKE ?
+          ORDER BY bc.priority DESC, bm.current_stock DESC
+        `).all(prefixPattern) as any[]
+      }
+    }
+
     const summary = {
       materialCode: code,
       totalContracts: materials.length,
       totalAvailableStock: materials.reduce((s: number, m: any) => s + m.current_stock, 0),
       totalInTransit: materials.reduce((s: number, m: any) => s + m.in_transit, 0),
       contracts: materials.map((m: any) => ({
+        materialId: m.id,
         contractId: m.contract_id,
         contractNo: m.contract_no,
         customer: m.customer,
@@ -130,9 +165,142 @@ router.get('/materials/search', (req, res) => {
       })),
     }
 
+    // When no results, include suggestions of all available material codes
+    if (materials.length === 0) {
+      const allCodes = db.prepare(
+        'SELECT DISTINCT material_code FROM biz_materials ORDER BY material_code'
+      ).all() as any[]
+      ;(summary as any).suggestedCodes = allCodes.map((r: any) => r.material_code)
+    }
+
     res.json(summary)
   } catch (err) {
     console.error('[BizMaterials] Search error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+// POST /api/biz-contracts/materials/upsert — find or create material with contract chain
+router.post('/materials/upsert', (req, res) => {
+  try {
+    const db = getDb()
+    const { contractNo, materialCode, materialName, currentStock, requiredQty } = req.body
+    if (!contractNo || !materialCode) {
+      res.status(400).json({ error: 'contractNo and materialCode are required' })
+      return
+    }
+
+    const stock = Number(currentStock) || 0
+    const required = Number(requiredQty) || 0
+
+    // Step 1: Find or create contract
+    let contract = db.prepare('SELECT * FROM biz_contracts WHERE contract_no = ?').get(contractNo) as any
+    if (!contract) {
+      // Look up from analysis_orders for customer data
+      const order = db.prepare('SELECT * FROM analysis_orders WHERE contract_number = ? LIMIT 1').get(contractNo) as any
+      const contractId = `SC-${contractNo.replace(/[^A-Za-z0-9]/g, '-')}`
+      const customer = order?.customer || '待确认客户'
+      const amount = order?.amount ? parseFloat(order.amount) : 0
+      db.prepare(
+        'INSERT INTO biz_contracts (id, contract_no, customer, amount, priority) VALUES (?, ?, ?, ?, ?)'
+      ).run(contractId, contractNo, customer, amount, '普通')
+      contract = db.prepare('SELECT * FROM biz_contracts WHERE id = ?').get(contractId) as any
+    }
+
+    // Step 2: Find or create default device for this contract
+    let device = db.prepare(
+      'SELECT * FROM biz_devices WHERE contract_id = ? LIMIT 1'
+    ).get(contract.id) as any
+    if (!device) {
+      const deviceId = `DEV-001-${contract.id}`
+      db.prepare(
+        'INSERT INTO biz_devices (id, contract_id, device_name, device_code) VALUES (?, ?, ?, ?)'
+      ).run(deviceId, contract.id, '默认装置', 'DEF-1')
+      device = db.prepare('SELECT * FROM biz_devices WHERE id = ?').get(deviceId) as any
+    }
+
+    // Step 3: Find or create default package for this device
+    let pkg = db.prepare(
+      'SELECT * FROM biz_packages WHERE device_id = ? LIMIT 1'
+    ).get(device.id) as any
+    if (!pkg) {
+      const pkgId = `PKG-0001-${contract.id}`
+      db.prepare(
+        'INSERT INTO biz_packages (id, device_id, package_name, package_code, status) VALUES (?, ?, ?, ?, ?)'
+      ).run(pkgId, device.id, '默认包', 'DEF-PKG', '待生产')
+      pkg = db.prepare('SELECT * FROM biz_packages WHERE id = ?').get(pkgId) as any
+    }
+
+    // Step 4: Find or create/update material
+    let material = db.prepare(
+      'SELECT * FROM biz_materials WHERE package_id = ? AND material_code = ?'
+    ).get(pkg.id, materialCode) as any
+    if (!material) {
+      const matCount = (db.prepare('SELECT COUNT(*) as c FROM biz_materials').get() as any).c
+      const matId = `MAT-${String(matCount + 1).padStart(4, '0')}`
+      const name = materialName || materialCode
+      db.prepare(
+        `INSERT INTO biz_materials (id, package_id, material_code, material_name, required_qty, current_stock, shortage_qty)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(matId, pkg.id, materialCode, name, required, stock, Math.max(0, required - stock))
+      material = db.prepare('SELECT * FROM biz_materials WHERE id = ?').get(matId) as any
+    } else {
+      db.prepare(
+        'UPDATE biz_materials SET current_stock = ?, required_qty = MAX(required_qty, ?), shortage_qty = MAX(0, required_qty - ? - in_transit) WHERE id = ?'
+      ).run(stock, required, stock, material.id)
+      // Recalculate
+      db.prepare(`
+        UPDATE biz_materials SET shortage_qty = MAX(0, required_qty - current_stock - in_transit)
+        WHERE id = ?
+      `).run(material.id)
+      material = db.prepare('SELECT * FROM biz_materials WHERE id = ?').get(material.id) as any
+    }
+
+    res.json({
+      success: true,
+      created: !material,
+      material: {
+        id: material.id,
+        materialCode: material.material_code,
+        materialName: material.material_name,
+        currentStock: material.current_stock,
+        requiredQty: material.required_qty,
+        shortageQty: material.shortage_qty,
+        contractNo: contract.contract_no,
+        contractId: contract.id,
+      },
+    })
+  } catch (err) {
+    console.error('[BizMaterials] Upsert error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+// PUT /api/biz-contracts/materials/:id/update-stock
+router.put('/materials/:id/update-stock', (req, res) => {
+  try {
+    const db = getDb()
+    const { current_stock } = req.body
+    if (current_stock === undefined || current_stock === null) {
+      res.status(400).json({ error: 'current_stock is required' })
+      return
+    }
+    const result = db.prepare(
+      'UPDATE biz_materials SET current_stock = ? WHERE id = ?'
+    ).run(Number(current_stock), req.params.id)
+    if (result.changes === 0) {
+      res.status(404).json({ error: 'Material not found' })
+      return
+    }
+    // Recalculate shortage_qty
+    db.prepare(`
+      UPDATE biz_materials SET shortage_qty = MAX(0, required_qty - current_stock - in_transit)
+      WHERE id = ?
+    `).run(req.params.id)
+    const updated = db.prepare('SELECT * FROM biz_materials WHERE id = ?').get(req.params.id) as any
+    res.json({ success: true, id: req.params.id, current_stock: updated.current_stock, shortage_qty: updated.shortage_qty })
+  } catch (err) {
+    console.error('[BizMaterials] Update stock error:', err)
     res.status(500).json({ error: 'Internal error' })
   }
 })

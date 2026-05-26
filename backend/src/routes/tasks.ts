@@ -92,6 +92,7 @@ function mapRow(r: any) {
     categoryLabel: cat.label,
     skillId: r.skill_id || '',
     skillName: r.skill_name || '',
+    analysisTaskId: r.analysis_task_id || '',
   }
 }
 
@@ -161,7 +162,7 @@ router.get('/', (req, res) => {
     const offset = (page - 1) * pageSize
 
     const rows = db.prepare(
-      `SELECT at2.*, ao.contract_number
+      `SELECT at2.*, ao.contract_number, ao.analysis_task_id
        FROM analysis_todos at2
        JOIN analysis_orders ao ON at2.order_id = ao.id
        ${where}
@@ -202,7 +203,7 @@ router.get('/:id', (req, res) => {
   try {
     const db = getDb()
     const row = db.prepare(
-      `SELECT at2.*, ao.contract_number
+      `SELECT at2.*, ao.contract_number, ao.analysis_task_id
        FROM analysis_todos at2
        JOIN analysis_orders ao ON at2.order_id = ao.id
        WHERE at2.id = ?`
@@ -218,6 +219,71 @@ router.get('/:id', (req, res) => {
   } catch (err) {
     console.error('[Tasks] Get error:', err)
     res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+// PUT /api/tasks/:id/mark-complete — mark task as done and return related analysis task info
+router.put('/:id/mark-complete', (req, res) => {
+  try {
+    const db = getDb()
+    const row = db.prepare(
+      `SELECT at2.*, ao.contract_number, ao.analysis_task_id
+       FROM analysis_todos at2
+       JOIN analysis_orders ao ON at2.order_id = ao.id
+       WHERE at2.id = ?`
+    ).get(req.params.id) as any
+
+    if (!row) {
+      res.status(404).json({ error: 'Task not found' })
+      return
+    }
+
+    // Update task status to done
+    db.prepare('UPDATE analysis_todos SET status = ? WHERE id = ?').run('done', req.params.id)
+
+    // Get all contract numbers for this analysis task
+    const orders = db.prepare(
+      'SELECT contract_number FROM analysis_orders WHERE analysis_task_id = ?'
+    ).all(row.analysis_task_id) as any[]
+    const contractNumbers = orders.map((o: any) => o.contract_number)
+
+    // Get analysis task title
+    const analysisTask = db.prepare(
+      'SELECT title FROM analysis_tasks WHERE id = ?'
+    ).get(row.analysis_task_id) as any
+
+    res.json({
+      success: true,
+      taskId: row.id,
+      analysisTaskId: row.analysis_task_id,
+      analysisTitle: analysisTask?.title || '',
+      title: (row.description || '').slice(0, 50),
+      description: row.description || '',
+      assignee: row.assignee || '',
+      supervisor: row.supervisor || '',
+      contractNumbers,
+      status: 'done',
+    })
+  } catch (err) {
+    console.error('[Tasks] mark-complete error:', err)
+    // Fallback for mock data
+    const task = mockTasks.find((t: any) => t.id === req.params.id)
+    if (!task) {
+      res.status(404).json({ error: 'Task not found' })
+      return
+    }
+    res.json({
+      success: true,
+      taskId: task.id,
+      analysisTaskId: '',
+      analysisTitle: '',
+      title: task.title,
+      description: task.description,
+      assignee: task.assignee,
+      supervisor: task.supervisor || '',
+      contractNumbers: [task.contractId],
+      status: 'done',
+    })
   }
 })
 
