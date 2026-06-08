@@ -95,12 +95,44 @@ export class SessionStore {
         updated_at TEXT DEFAULT (datetime('now','localtime'))
       );
       CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id, task_id);
+
+      -- Token usage tracking (project-level, like Claude Code /cost)
+      CREATE TABLE IF NOT EXISTS token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_key TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        model_id TEXT NOT NULL DEFAULT '',
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_key);
+      CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage(created_at);
+
+      CREATE TABLE IF NOT EXISTS token_daily_summary (
+        date TEXT PRIMARY KEY,
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        request_count INTEGER DEFAULT 0,
+        session_count INTEGER DEFAULT 0,
+        updated_at TEXT DEFAULT (datetime('now','localtime'))
+      );
     `)
 
     // Migration: add reasoning_content column for existing databases
-    const columns = this.db.prepare("PRAGMA table_info(agent_messages)").all() as any[]
+    let columns = this.db.prepare("PRAGMA table_info(agent_messages)").all() as any[]
     if (!columns.some((c: any) => c.name === 'reasoning_content')) {
       this.db.exec("ALTER TABLE agent_messages ADD COLUMN reasoning_content TEXT DEFAULT ''")
+    }
+
+    // Migration: add columns to token_daily_summary for older databases
+    columns = this.db.prepare("PRAGMA table_info(token_daily_summary)").all() as any[]
+    if (!columns.some((c: any) => c.name === 'total_tokens')) {
+      this.db.exec("ALTER TABLE token_daily_summary ADD COLUMN total_tokens INTEGER DEFAULT 0")
+    }
+    if (!columns.some((c: any) => c.name === 'session_count')) {
+      this.db.exec("ALTER TABLE token_daily_summary ADD COLUMN session_count INTEGER DEFAULT 0")
     }
   }
 
@@ -230,6 +262,98 @@ export class SessionStore {
     this.db.prepare(
       'UPDATE agent_sessions SET cumulative_input_tokens = 0, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?'
     ).run(key)
+  }
+
+  // ── Token usage tracking (project-level, like Claude Code /cost) ──
+
+  recordTokenUsage(key: string, sessionId: string, modelId: string, promptTokens: number, completionTokens: number): void {
+    if (promptTokens <= 0 && completionTokens <= 0) return
+    const today = new Date().toISOString().slice(0, 10)
+    const insertUsage = this.db.prepare(
+      'INSERT INTO token_usage (session_key, session_id, model_id, prompt_tokens, completion_tokens) VALUES (?, ?, ?, ?, ?)'
+    )
+    // Check if this session_key has been seen today BEFORE inserting — the insert
+    // happens inside the transaction AFTER this check, so it correctly detects
+    // brand-new sessions vs repeat requests from the same session.
+    const isNewSessionToday = this.db.prepare(
+      'SELECT COUNT(*) as c FROM token_usage WHERE session_key = ? AND date(created_at) = ?'
+    ).get(key, today) as any
+    const sessionCountIncrement = (isNewSessionToday?.c || 0) === 0 ? 1 : 0
+    const upsertDaily = this.db.prepare(`
+      INSERT INTO token_daily_summary (date, prompt_tokens, completion_tokens, total_tokens, request_count, session_count)
+      VALUES (?, ?, ?, ?, 1, ?)
+      ON CONFLICT(date) DO UPDATE SET
+        prompt_tokens = prompt_tokens + ?,
+        completion_tokens = completion_tokens + ?,
+        total_tokens = total_tokens + ?,
+        request_count = request_count + 1,
+        session_count = session_count + ?,
+        updated_at = datetime('now','localtime')
+    `)
+    const totalTokens = promptTokens + completionTokens
+    const doRecord = this.db.transaction(() => {
+      insertUsage.run(key, sessionId, modelId, promptTokens, completionTokens)
+      upsertDaily.run(today, promptTokens, completionTokens, totalTokens, sessionCountIncrement,
+        promptTokens, completionTokens, totalTokens, sessionCountIncrement)
+    })
+    doRecord()
+  }
+
+  getUsageSummary(): {
+    today: { prompt: number; completion: number; total: number; requests: number; sessions: number }
+    week: { prompt: number; completion: number; total: number; requests: number }
+    allTime: { prompt: number; completion: number; total: number; requests: number; sessions: number }
+  } {
+    const today = new Date().toISOString().slice(0, 10)
+    const weekStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
+    const todayRow = this.db.prepare(
+      'SELECT prompt_tokens, completion_tokens, total_tokens, request_count, session_count FROM token_daily_summary WHERE date = ?'
+    ).get(today) as any
+
+    const weekRows = this.db.prepare(
+      'SELECT SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(total_tokens) as total, SUM(request_count) as requests FROM token_daily_summary WHERE date >= ?'
+    ).get(weekStart) as any
+
+    // token_usage only has prompt_tokens + completion_tokens; compute totals via expression
+    const allRows = this.db.prepare(
+      'SELECT SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(prompt_tokens + completion_tokens) as total, COUNT(*) as requests, COUNT(DISTINCT session_id) as sessions FROM token_usage'
+    ).get() as any
+
+    return {
+      today: {
+        prompt: todayRow?.prompt_tokens || 0,
+        completion: todayRow?.completion_tokens || 0,
+        total: todayRow?.total_tokens || 0,
+        requests: todayRow?.request_count || 0,
+        sessions: todayRow?.session_count || 0,
+      },
+      week: {
+        prompt: weekRows?.prompt || 0,
+        completion: weekRows?.completion || 0,
+        total: weekRows?.total || 0,
+        requests: weekRows?.requests || 0,
+      },
+      allTime: {
+        prompt: allRows?.prompt || 0,
+        completion: allRows?.completion || 0,
+        total: allRows?.total || 0,
+        requests: allRows?.requests || 0,
+        sessions: allRows?.sessions || 0,
+      },
+    }
+  }
+
+  getDailyUsage(days: number = 14): Array<{ date: string; prompt: number; completion: number; total: number; requests: number }> {
+    return this.db.prepare(
+      'SELECT date, prompt_tokens as prompt, completion_tokens as completion, total_tokens as total, request_count as requests FROM token_daily_summary ORDER BY date DESC LIMIT ?'
+    ).all(days) as any[]
+  }
+
+  getModelUsage(): Array<{ model: string; prompt: number; completion: number; total: number; requests: number }> {
+    return this.db.prepare(
+      'SELECT model_id as model, SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(prompt_tokens + completion_tokens) as total, COUNT(*) as requests FROM token_usage GROUP BY model_id ORDER BY total DESC'
+    ).all() as any[]
   }
 
   // ── Task persistence ──

@@ -7951,3 +7951,209 @@ body {
   align-items: center;
   justify-content: center;
 }
+
+/* ── Token usage tracking panel (like Claude Code /cost) ── */
+
+.psb-token-breakdown {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  font-size: 9px;
+  opacity: 0.7;
+}
+.psb-tb-in  { color: var(--color-accent); }
+.psb-tb-out { color: var(--color-success); }
+.psb-usage-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  line-height: 1;
+}
+.psb-usage-btn:hover { opacity: 1; background: var(--color-border); }
+
+.usage-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.3);
+  backdrop-filter: blur(2px);
+}
+.usage-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.18);
+  overflow: hidden;
+}
+.usage-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  font-weight: 600;
+  font-size: 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+.usage-panel-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.usage-panel-close:hover { background: var(--color-border); }
+.usage-panel-body { padding: 16px 18px; }
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.usage-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 12px;
+  text-align: center;
+}
+.usage-card-label {
+  font-size: 11px;
+  color: var(--color-muted);
+  font-weight: 500;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+.usage-card-value {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
+.usage-card-detail {
+  font-size: 10px;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+
+.usage-breakdown {
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+.usage-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.usage-breakdown-row.total {
+  border-top: 1px solid var(--color-border);
+  margin-top: 4px;
+  padding-top: 8px;
+  font-weight: 600;
+}
+.usage-breakdown-label { color: var(--color-muted); }
+.usage-breakdown-val {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.usage-breakdown-val.in  { color: var(--color-accent); }
+.usage-breakdown-val.out { color: var(--color-success); }
+
+.usage-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Model breakdown */
+.usage-model-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 12px;
+}
+.usage-model-name {
+  color: var(--color-text);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-model-stats {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.usage-model-total {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 12px;
+}
+.usage-model-requests {
+  font-size: 10px;
+  color: var(--color-muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Daily history chart */
+.usage-daily-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.usage-daily-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.usage-daily-date {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-muted);
+  width: 34px;
+  flex-shrink: 0;
+}
+.usage-daily-bar-track {
+  flex: 1;
+  height: 14px;
+  background: var(--color-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.usage-daily-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-accent), var(--color-success));
+  border-radius: 4px;
+  min-width: 2px;
+  transition: width 0.3s ease;
+}
+.usage-daily-val {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-muted);
+  width: 36px;
+  text-align: right;
+  flex-shrink: 0;
+}

@@ -3022,6 +3022,16 @@ export async function handleAgentMessage(
       }
     }
 
+    // Record token usage for project-level tracking (like Claude Code /cost)
+    if (sessionStore && totalTokens.prompt + totalTokens.completion > 0) {
+      try {
+        sessionStore.recordTokenUsage(
+          sessionKey, sessionId, modelId,
+          totalTokens.prompt, totalTokens.completion
+        )
+      } catch { /* best-effort */ }
+    }
+
     // Send complete with full stats
     send(ws, {
       type: 'complete',

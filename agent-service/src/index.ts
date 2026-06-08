@@ -43,6 +43,32 @@ app.get('/health', (_req, res) => {
   })
 })
 
+// Usage stats (project-level token tracking, like Claude Code /cost)
+app.get('/usage/summary', (_req, res) => {
+  try {
+    res.json(sessionStore.getUsageSummary())
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/usage/daily', (req, res) => {
+  try {
+    const days = parseInt(req.query.days as string) || 14
+    res.json(sessionStore.getDailyUsage(days))
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/usage/models', (_req, res) => {
+  try {
+    res.json(sessionStore.getModelUsage())
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // API routes
 app.use('/skills', skillsRouter)
 app.use('/hooks', hooksRouter)
