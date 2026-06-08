@@ -102,8 +102,11 @@ export class SessionStore {
         session_key TEXT NOT NULL,
         session_id TEXT NOT NULL,
         model_id TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT '',
         prompt_tokens INTEGER DEFAULT 0,
         completion_tokens INTEGER DEFAULT 0,
+        cached_prompt_tokens INTEGER DEFAULT 0,
+        uncached_prompt_tokens INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now','localtime'))
       );
       CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_key);
@@ -134,6 +137,22 @@ export class SessionStore {
     if (!columns.some((c: any) => c.name === 'session_count')) {
       this.db.exec("ALTER TABLE token_daily_summary ADD COLUMN session_count INTEGER DEFAULT 0")
     }
+
+    // Migration: add user_id and cache columns to token_usage for older databases
+    columns = this.db.prepare("PRAGMA table_info(token_usage)").all() as any[]
+    if (!columns.some((c: any) => c.name === 'user_id')) {
+      this.db.exec("ALTER TABLE token_usage ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+    }
+    if (!columns.some((c: any) => c.name === 'cached_prompt_tokens')) {
+      this.db.exec("ALTER TABLE token_usage ADD COLUMN cached_prompt_tokens INTEGER DEFAULT 0")
+    }
+    if (!columns.some((c: any) => c.name === 'uncached_prompt_tokens')) {
+      this.db.exec("ALTER TABLE token_usage ADD COLUMN uncached_prompt_tokens INTEGER DEFAULT 0")
+    }
+    // Create index on user_id after column migration
+    try {
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_token_usage_user ON token_usage(user_id)")
+    } catch { /* index may already exist */ }
   }
 
   // ── Session CRUD ──
@@ -266,11 +285,15 @@ export class SessionStore {
 
   // ── Token usage tracking (project-level, like Claude Code /cost) ──
 
-  recordTokenUsage(key: string, sessionId: string, modelId: string, promptTokens: number, completionTokens: number): void {
+  recordTokenUsage(
+    key: string, sessionId: string, modelId: string, userId: string,
+    promptTokens: number, completionTokens: number,
+    cachedPromptTokens: number = 0, uncachedPromptTokens: number = 0,
+  ): void {
     if (promptTokens <= 0 && completionTokens <= 0) return
     const today = new Date().toISOString().slice(0, 10)
     const insertUsage = this.db.prepare(
-      'INSERT INTO token_usage (session_key, session_id, model_id, prompt_tokens, completion_tokens) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO token_usage (session_key, session_id, model_id, user_id, prompt_tokens, completion_tokens, cached_prompt_tokens, uncached_prompt_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     )
     // Check if this session_key has been seen today BEFORE inserting — the insert
     // happens inside the transaction AFTER this check, so it correctly detects
@@ -292,21 +315,24 @@ export class SessionStore {
     `)
     const totalTokens = promptTokens + completionTokens
     const doRecord = this.db.transaction(() => {
-      insertUsage.run(key, sessionId, modelId, promptTokens, completionTokens)
+      insertUsage.run(key, sessionId, modelId, userId || '', promptTokens, completionTokens, cachedPromptTokens, uncachedPromptTokens)
       upsertDaily.run(today, promptTokens, completionTokens, totalTokens, sessionCountIncrement,
         promptTokens, completionTokens, totalTokens, sessionCountIncrement)
     })
     doRecord()
   }
 
-  getUsageSummary(): {
+  getUsageSummary(userId?: string): {
     today: { prompt: number; completion: number; total: number; requests: number; sessions: number }
     week: { prompt: number; completion: number; total: number; requests: number }
-    allTime: { prompt: number; completion: number; total: number; requests: number; sessions: number }
+    allTime: { prompt: number; completion: number; total: number; requests: number; sessions: number; cachedPrompt: number; uncachedPrompt: number }
   } {
     const today = new Date().toISOString().slice(0, 10)
     const weekStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const userFilter = userId ? 'WHERE user_id = ?' : ''
+    const userParam = userId ? [userId] : []
 
+    // Today/week use aggregated daily_summary (not user-filtered for now — daily rollup stays global)
     const todayRow = this.db.prepare(
       'SELECT prompt_tokens, completion_tokens, total_tokens, request_count, session_count FROM token_daily_summary WHERE date = ?'
     ).get(today) as any
@@ -315,10 +341,10 @@ export class SessionStore {
       'SELECT SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(total_tokens) as total, SUM(request_count) as requests FROM token_daily_summary WHERE date >= ?'
     ).get(weekStart) as any
 
-    // token_usage only has prompt_tokens + completion_tokens; compute totals via expression
+    // All-time from token_usage, optionally filtered by user
     const allRows = this.db.prepare(
-      'SELECT SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(prompt_tokens + completion_tokens) as total, COUNT(*) as requests, COUNT(DISTINCT session_id) as sessions FROM token_usage'
-    ).get() as any
+      `SELECT SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(prompt_tokens + completion_tokens) as total, COUNT(*) as requests, COUNT(DISTINCT session_id) as sessions, SUM(cached_prompt_tokens) as cachedPrompt, SUM(uncached_prompt_tokens) as uncachedPrompt FROM token_usage ${userFilter}`
+    ).get(...userParam) as any
 
     return {
       today: {
@@ -340,20 +366,26 @@ export class SessionStore {
         total: allRows?.total || 0,
         requests: allRows?.requests || 0,
         sessions: allRows?.sessions || 0,
+        cachedPrompt: allRows?.cachedPrompt || 0,
+        uncachedPrompt: allRows?.uncachedPrompt || 0,
       },
     }
   }
 
-  getDailyUsage(days: number = 14): Array<{ date: string; prompt: number; completion: number; total: number; requests: number }> {
+  getDailyUsage(days: number = 14, userId?: string): Array<{ date: string; prompt: number; completion: number; total: number; requests: number }> {
+    const userFilter = userId ? 'WHERE user_id = ?' : ''
+    const params = userId ? [userId, days] : [days]
     return this.db.prepare(
-      'SELECT date, prompt_tokens as prompt, completion_tokens as completion, total_tokens as total, request_count as requests FROM token_daily_summary ORDER BY date DESC LIMIT ?'
-    ).all(days) as any[]
+      `SELECT date, SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(prompt_tokens + completion_tokens) as total, COUNT(*) as requests FROM token_usage ${userFilter} GROUP BY date ORDER BY date DESC LIMIT ?`
+    ).all(...params) as any[]
   }
 
-  getModelUsage(): Array<{ model: string; prompt: number; completion: number; total: number; requests: number }> {
+  getModelUsage(userId?: string): Array<{ model: string; prompt: number; completion: number; total: number; requests: number }> {
+    const userFilter = userId ? 'WHERE user_id = ?' : ''
+    const params = userId ? [userId] : []
     return this.db.prepare(
-      'SELECT model_id as model, SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(prompt_tokens + completion_tokens) as total, COUNT(*) as requests FROM token_usage GROUP BY model_id ORDER BY total DESC'
-    ).all() as any[]
+      `SELECT model_id as model, SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, SUM(prompt_tokens + completion_tokens) as total, COUNT(*) as requests FROM token_usage ${userFilter} GROUP BY model_id ORDER BY total DESC`
+    ).all(...params) as any[]
   }
 
   // ── Task persistence ──

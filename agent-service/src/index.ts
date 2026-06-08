@@ -44,9 +44,10 @@ app.get('/health', (_req, res) => {
 })
 
 // Usage stats (project-level token tracking, like Claude Code /cost)
-app.get('/usage/summary', (_req, res) => {
+app.get('/usage/summary', (req, res) => {
   try {
-    res.json(sessionStore.getUsageSummary())
+    const userId = req.query.userId as string | undefined
+    res.json(sessionStore.getUsageSummary(userId))
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }
@@ -55,15 +56,17 @@ app.get('/usage/summary', (_req, res) => {
 app.get('/usage/daily', (req, res) => {
   try {
     const days = parseInt(req.query.days as string) || 14
-    res.json(sessionStore.getDailyUsage(days))
+    const userId = req.query.userId as string | undefined
+    res.json(sessionStore.getDailyUsage(days, userId))
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }
 })
 
-app.get('/usage/models', (_req, res) => {
+app.get('/usage/models', (req, res) => {
   try {
-    res.json(sessionStore.getModelUsage())
+    const userId = req.query.userId as string | undefined
+    res.json(sessionStore.getModelUsage(userId))
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }

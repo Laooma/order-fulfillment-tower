@@ -1,13 +1,16 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Settings, LogOut, ChevronDown, Sun, Moon } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
 import { useUIStore } from '../stores/uiStore'
 
+const UsagePanel = lazy(() => import('./UsagePanel'))
+
 export default function TopBar() {
   const { user, isAuthenticated, logout } = useAuthStore()
   const { theme, toggleTheme } = useUIStore()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [showUsage, setShowUsage] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
 
@@ -26,6 +29,7 @@ export default function TopBar() {
     : ''
 
   return (
+    <>
     <header className="shell-topbar">
       <div className="shell-topbar-logo">
         <div className="shell-topbar-logo-icon">
@@ -51,6 +55,14 @@ export default function TopBar() {
           onClick={() => navigate('/settings')}
         >
           <Settings size={15} />
+        </button>
+
+        <button
+          className="shell-topbar-icon-btn"
+          title="Token 消耗统计"
+          onClick={() => setShowUsage(true)}
+        >
+          📊
         </button>
 
         {isAuthenticated ? (
@@ -87,5 +99,11 @@ export default function TopBar() {
         )}
       </div>
     </header>
+    {showUsage && (
+      <Suspense fallback={null}>
+        <UsagePanel onClose={() => setShowUsage(false)} />
+      </Suspense>
+    )}
+    </>
   )
 }

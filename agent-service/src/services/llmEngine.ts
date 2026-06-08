@@ -19,7 +19,13 @@ export interface StreamChunk {
       arguments: string
     }
   }>
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+    cachedPromptTokens?: number
+    uncachedPromptTokens?: number
+  }
 }
 
 export async function* streamChat(
@@ -87,6 +93,8 @@ export async function* streamChat(
             promptTokens: data.usage.prompt_tokens || 0,
             completionTokens: data.usage.completion_tokens || 0,
             totalTokens: data.usage.total_tokens || 0,
+            cachedPromptTokens: data.usage.prompt_cache_hit_tokens ?? data.usage.prompt_tokens_details?.cached_tokens ?? undefined,
+            uncachedPromptTokens: data.usage.prompt_cache_miss_tokens ?? undefined,
           }
         }
 
@@ -139,6 +147,8 @@ export async function chatCompletion(
         promptTokens: data.usage.prompt_tokens || 0,
         completionTokens: data.usage.completion_tokens || 0,
         totalTokens: data.usage.total_tokens || 0,
+        cachedPromptTokens: data.usage.prompt_cache_hit_tokens ?? data.usage.prompt_tokens_details?.cached_tokens ?? undefined,
+        uncachedPromptTokens: data.usage.prompt_cache_miss_tokens ?? undefined,
       } : undefined,
     }
   } catch (err: any) {

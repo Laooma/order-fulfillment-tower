@@ -8005,6 +8005,13 @@ body {
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg);
 }
+.usage-panel-user {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-muted);
+  margin-left: 8px;
+  flex: 1;
+}
 .usage-panel-close {
   background: none;
   border: none;

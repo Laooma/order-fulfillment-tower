@@ -2275,7 +2275,7 @@ export async function handleAgentMessage(
   sessionLocks.set(sessionId, lockPromise)
 
   const startTime = Date.now()
-  let totalTokens = { prompt: 0, completion: 0 }
+  let totalTokens = { prompt: 0, completion: 0, cachedPrompt: 0, uncachedPrompt: 0 }
 
   try {
 
@@ -2473,6 +2473,8 @@ export async function handleAgentMessage(
           iterationPromptTokens = chunk.usage.promptTokens
           totalTokens.prompt += chunk.usage.promptTokens
           totalTokens.completion += chunk.usage.completionTokens
+          if (chunk.usage.cachedPromptTokens) totalTokens.cachedPrompt += chunk.usage.cachedPromptTokens
+          if (chunk.usage.uncachedPromptTokens) totalTokens.uncachedPrompt += chunk.usage.uncachedPromptTokens
         }
 
         // Accumulate tool calls from streaming deltas
@@ -3026,8 +3028,9 @@ export async function handleAgentMessage(
     if (sessionStore && totalTokens.prompt + totalTokens.completion > 0) {
       try {
         sessionStore.recordTokenUsage(
-          sessionKey, sessionId, modelId,
-          totalTokens.prompt, totalTokens.completion
+          sessionKey, sessionId, modelId, msg.userId || '',
+          totalTokens.prompt, totalTokens.completion,
+          totalTokens.cachedPrompt || 0, totalTokens.uncachedPrompt || 0,
         )
       } catch { /* best-effort */ }
     }

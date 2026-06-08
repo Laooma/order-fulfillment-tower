@@ -84,14 +84,6 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const [isCompacting, setIsCompacting] = useState(false)
   const [planMode, setPlanMode] = useState<{ active: boolean; goal?: string }>({ active: false })
   const [savedPlan, setSavedPlan] = useState<{ title: string; path: string; content: string } | null>(null)
-  const [usageSummary, setUsageSummary] = useState<{
-    today: { prompt: number; completion: number; total: number; requests: number; sessions: number }
-    week: { prompt: number; completion: number; total: number; requests: number }
-    allTime: { prompt: number; completion: number; total: number; requests: number; sessions: number }
-  } | null>(null)
-  const [usageDaily, setUsageDaily] = useState<Array<{ date: string; prompt: number; completion: number; total: number; requests: number }>>([])
-  const [usageModels, setUsageModels] = useState<Array<{ model: string; prompt: number; completion: number; total: number; requests: number }>>([])
-  const [showUsage, setShowUsage] = useState(false)
   const lastActivityRef = useRef(Date.now())
   const [idleDuration, setIdleDuration] = useState(0)
   const [errorMessage, setErrorMessage] = useState<{ title: string; detail: string } | null>(null)
@@ -654,6 +646,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
       cabinetPackages: cabinetPackageIds,
       images,
       currentPage: pageConfig?.page || 'unknown',
+      userId: useAuthStore.getState().user?.id,
     })
     if (!sent) {
       setIsSending(false)
@@ -1281,108 +1274,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                 <span className="psb-tb-out">→{formatTokens(tokenStats.completion)}</span>
               </span>
             </span>
-            <button
-              className="psb-usage-btn"
-              title="项目 Token 消耗统计"
-              onClick={async () => {
-                const baseUrl = import.meta.env.VITE_AGENT_BASE_URL || 'http://localhost:3002'
-                try {
-                  const [summaryRes, dailyRes, modelsRes] = await Promise.all([
-                    fetch(`${baseUrl}/usage/summary`),
-                    fetch(`${baseUrl}/usage/daily?days=14`),
-                    fetch(`${baseUrl}/usage/models`),
-                  ])
-                  setUsageSummary(await summaryRes.json())
-                  setUsageDaily(await dailyRes.json())
-                  setUsageModels(await modelsRes.json())
-                  setShowUsage(true)
-                } catch { /* ignore */ }
-              }}
-            >
-              📊
-            </button>
             <span className="psb-elapsed">{formatElapsed(elapsedMs)}</span>
-          </div>
-        </div>
-      )}
-      {showUsage && usageSummary && (
-        <div className="usage-overlay" onClick={() => setShowUsage(false)}>
-          <div className="usage-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="usage-panel-header">
-              <span>📊 Token 消耗统计</span>
-              <button className="usage-panel-close" onClick={() => setShowUsage(false)}>✕</button>
-            </div>
-            <div className="usage-panel-body">
-              <div className="usage-grid">
-                <div className="usage-card">
-                  <div className="usage-card-label">今日</div>
-                  <div className="usage-card-value">{formatTokens(usageSummary.today.total)}</div>
-                  <div className="usage-card-detail">
-                    {usageSummary.today.requests} 请求 · {usageSummary.today.sessions} 会话
-                  </div>
-                </div>
-                <div className="usage-card">
-                  <div className="usage-card-label">本周</div>
-                  <div className="usage-card-value">{formatTokens(usageSummary.week.total)}</div>
-                  <div className="usage-card-detail">{usageSummary.week.requests} 请求</div>
-                </div>
-                <div className="usage-card">
-                  <div className="usage-card-label">全部</div>
-                  <div className="usage-card-value">{formatTokens(usageSummary.allTime.total)}</div>
-                  <div className="usage-card-detail">
-                    {usageSummary.allTime.requests} 请求 · {usageSummary.allTime.sessions} 会话
-                  </div>
-                </div>
-              </div>
-              <div className="usage-breakdown">
-                <div className="usage-breakdown-row">
-                  <span className="usage-breakdown-label">输入 tokens</span>
-                  <span className="usage-breakdown-val in">{formatTokens(usageSummary.allTime.prompt)}</span>
-                </div>
-                <div className="usage-breakdown-row">
-                  <span className="usage-breakdown-label">输出 tokens</span>
-                  <span className="usage-breakdown-val out">{formatTokens(usageSummary.allTime.completion)}</span>
-                </div>
-                <div className="usage-breakdown-row total">
-                  <span className="usage-breakdown-label">总计</span>
-                  <span className="usage-breakdown-val">{formatTokens(usageSummary.allTime.total)}</span>
-                </div>
-              </div>
-              {usageModels.length > 0 && (
-                <div className="usage-models">
-                  <div className="usage-section-title">模型用量</div>
-                  {usageModels.map((m) => (
-                    <div key={m.model} className="usage-model-row">
-                      <span className="usage-model-name">{m.model || '(unknown)'}</span>
-                      <span className="usage-model-stats">
-                        <span className="usage-model-total">{formatTokens(m.total)}</span>
-                        <span className="usage-model-requests">{m.requests} 次</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {usageDaily.length > 0 && (
-                <div className="usage-daily">
-                  <div className="usage-section-title">每日消耗</div>
-                  <div className="usage-daily-chart">
-                    {usageDaily.slice(0, 14).reverse().map((d) => {
-                      const maxTotal = Math.max(...usageDaily.map(x => x.total), 1)
-                      const barWidth = Math.max(2, Math.round((d.total / maxTotal) * 100))
-                      return (
-                        <div key={d.date} className="usage-daily-bar-wrap" title={`${d.date}: ${formatTokens(d.total)} (${d.requests} 请求)`}>
-                          <div className="usage-daily-date">{d.date.slice(5)}</div>
-                          <div className="usage-daily-bar-track">
-                            <div className="usage-daily-bar" style={{ width: `${barWidth}%` }} />
-                          </div>
-                          <div className="usage-daily-val">{formatTokens(d.total)}</div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}

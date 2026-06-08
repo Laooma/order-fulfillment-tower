@@ -47,6 +47,7 @@ export interface AgentMessage {
   message?: string
   content?: string
   currentPage?: string
+  userId?: string
   orders?: string[]
   cabinetPackages?: string[]
   taskId?: string
