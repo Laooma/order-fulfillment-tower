@@ -2,7 +2,7 @@
   "providers": [
     {
       "name": "DeepSeek",
-      "apiKey": "sk-f97d901a02f24799abd3a57cde070ed3",
+      "apiKey": "sk-7d3f210191dc46ea9ed74071b8b029c7",
       "apiUrl": "https://api.deepseek.com/v1/chat/completions",
       "models": [
         {
@@ -23,7 +23,7 @@
           "name": "deepseek-v4-flash",
           "tag": "deepseek-v4-flash",
           "deepThinking": false,
-          "contextWindow": 128000
+          "contextWindow": 256000
         },
         {
           "id": "deepseek-v4-pro",

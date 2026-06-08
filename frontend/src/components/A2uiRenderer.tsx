@@ -217,11 +217,15 @@ function TextView({ text, variant, color }: { text: string; variant?: string; co
   }
 }
 
-function ButtonView({ text, variant, action: _action }: { text: string; variant?: string; action?: { name: string; context?: Record<string, unknown> } }) {
+function ButtonView({ text, variant, action, onAction }: { text: string; variant?: string; action?: { name: string; context?: Record<string, unknown> }; onAction?: (action: { name: string; context?: Record<string, unknown> }) => void }) {
   const isPrimary = variant === 'primary'
   const isDanger = variant === 'danger'
+  const handleClick = () => {
+    if (action && onAction) onAction(action)
+  }
   return (
     <button
+      onClick={handleClick}
       style={{
         padding: '6px 16px',
         borderRadius: 6,
@@ -264,6 +268,8 @@ function ComponentRenderer({
     return null
   }
 
+  const compName = comp.component.charAt(0).toUpperCase() + comp.component.slice(1)
+
   if (!SUPPORTED_COMPONENTS.has(comp.component)) {
     return <div style={{ color: 'orange', padding: 4 }}>[Unknown: {comp.component}]</div>
   }
@@ -295,7 +301,7 @@ function ComponentRenderer({
     ))
   )
 
-  switch (comp.component) {
+  switch (compName) {
     case 'Text': {
       const text = resolve<string>(comp.text) ?? ''
       const variant = resolve<string>(comp.variant as DynamicValue<string>)
@@ -324,7 +330,7 @@ function ComponentRenderer({
       const text = resolve<string>(comp.text) ?? ''
       const variant = comp.variant as string
       const action = comp.action
-      return <ButtonView text={String(text)} variant={variant} action={action} />
+      return <ButtonView text={String(text)} variant={variant} action={action} onAction={onAction} />
     }
 
     case 'Divider':

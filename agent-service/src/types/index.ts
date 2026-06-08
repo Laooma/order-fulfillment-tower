@@ -39,7 +39,7 @@ export interface TodoItem {
 }
 
 export interface AgentMessage {
-  type: 'chat' | 'chunk' | 'complete' | 'error' | 'tool_call' | 'tool_result' | 'skill_assigned' | 'status' | 'todo_list' | 'abort'
+  type: 'chat' | 'chunk' | 'complete' | 'error' | 'tool_call' | 'tool_result' | 'skill_assigned' | 'status' | 'todo_list' | 'abort' | 'plan_mode' | 'plan_saved' | 'context_update' | 'context_warning'
   sessionId?: string
   skillId?: string
   autoAssign?: boolean

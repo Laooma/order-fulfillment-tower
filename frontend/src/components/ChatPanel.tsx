@@ -82,6 +82,8 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
   const [contextWindow, setContextWindow] = useState<number | null>(null)
   const [contextUsage, setContextUsage] = useState(0)
   const [isCompacting, setIsCompacting] = useState(false)
+  const [planMode, setPlanMode] = useState<{ active: boolean; goal?: string }>({ active: false })
+  const [savedPlan, setSavedPlan] = useState<{ title: string; path: string; content: string } | null>(null)
   const lastActivityRef = useRef(Date.now())
   const [idleDuration, setIdleDuration] = useState(0)
   const [errorMessage, setErrorMessage] = useState<{ title: string; detail: string } | null>(null)
@@ -379,9 +381,30 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
         if (msg.promptTokens != null) setContextUsage(msg.promptTokens)
         if (msg.contextWindow) setContextWindow(msg.contextWindow)
       }
+      if (msg.type === 'context_warning') {
+        // Two-tier system: warning indicator at 70%, actual compaction at 80%
+        if (msg.promptTokens != null) setContextUsage(msg.promptTokens)
+        if (msg.contextWindow) setContextWindow(msg.contextWindow)
+      }
       if (msg.type === 'compacting') {
         if (msg.phase === 'start') setIsCompacting(true)
         else setIsCompacting(false)
+      }
+      if (msg.type === 'plan_mode') {
+        const planMsg = msg as any
+        if (planMsg.phase === 'entered') {
+          setPlanMode({ active: true, goal: planMsg.goal })
+          setSavedPlan(null)
+        }
+      }
+      if (msg.type === 'plan_saved') {
+        const savedMsg = msg as any
+        setPlanMode({ active: false })
+        setSavedPlan({
+          title: savedMsg.planTitle || '',
+          path: savedMsg.planPath || '',
+          content: savedMsg.planContent || '',
+        })
       }
       if (msg.type === 'todo_list' && msg.todos) {
         setTodos(msg.todos)
@@ -777,6 +800,11 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
               )}
             </span>
           )}
+          {planMode.active && (
+            <span className="plan-mode-indicator" title={planMode.goal || '计划模式'}>
+              📋 计划中…
+            </span>
+          )}
         </div>
         {tabs && onTabChange && (
           <div className="panel-tabs">
@@ -948,6 +976,21 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
           </div>
         ) : (
           <div className="chat-messages" ref={chatMessagesRef} onScroll={handleChatScroll}>
+            {savedPlan && (
+              <div className="plan-result-card">
+                <div className="plan-result-header">
+                  <span className="plan-result-icon">📋</span>
+                  <span className="plan-result-title">计划已生成：{savedPlan.title}</span>
+                  <span className="plan-result-path">{savedPlan.path}</span>
+                </div>
+                <div className="plan-result-body">
+                  <MarkdownRenderer content={savedPlan.content} />
+                </div>
+                <div className="plan-result-actions">
+                  <span className="plan-result-badge">⏳ 待审批</span>
+                </div>
+              </div>
+            )}
             {messages.map((msg, i) => {
               // Render task_boundary as a visual separator between task bubbles
               if (msg.role === 'task_boundary') {

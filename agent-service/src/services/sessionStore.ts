@@ -226,6 +226,12 @@ export class SessionStore {
     return row?.cumulative_input_tokens || 0
   }
 
+  resetInputTokens(key: string): void {
+    this.db.prepare(
+      'UPDATE agent_sessions SET cumulative_input_tokens = 0, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?'
+    ).run(key)
+  }
+
   // ── Task persistence ──
 
   saveTasks(sessionId: string, tasks: Array<{ id: string; content: string; status: string; blockedBy?: string[]; verified?: boolean }>): void {

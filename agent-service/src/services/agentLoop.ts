@@ -1,4 +1,6 @@
 import { WebSocket } from 'ws'
+import fs from 'fs'
+import path from 'path'
 import type { Session, Skill, Hook, AgentMessage, TodoItem } from '../types'
 import { streamChat, chatCompletion } from './llmEngine'
 import type { McpPool } from './mcpPool'
@@ -33,40 +35,82 @@ function pushMessage(key: string, session: Session, message: Session['messages']
   }
 }
 
-// Helper: track tokens and check compaction after LLM call
-async function trackTokensAndCompact(key: string, session: Session, promptTokens: number, modelId: string): Promise<void> {
+// Helper: track tokens (for cost analytics) and trigger compaction based on
+// the LATEST API call's input size — not a cumulative sum that double-counts
+// earlier messages that are re-sent in every subsequent call.
+//
+// Compaction uses a "cache-safe fork" — it sends the conversation's own system
+// prompt and history as the prefix, appending only the summarization instruction
+// as a new user message.  This way the API prefix-matcher sees byte-identical
+// content up to the summarization instruction and serves the entire prefix from
+// cache (~90% cost reduction on the compaction call).
+async function trackTokensAndCompact(
+  key: string, session: Session, promptTokens: number, modelId: string,
+  ws?: WebSocket, sessionId?: string
+): Promise<void> {
   if (!sessionStore) return
+
+  // Accumulate for cost/analytics only (not used for compaction decisions anymore)
   sessionStore.addInputTokens(key, promptTokens)
   session.cumulativeInputTokens += promptTokens
 
-  // Dynamic threshold: 90% of model context window (input tokens only)
+  // Two-tier threshold: warn at 70%, compact at 80% of context window
   const { getAllModels } = await import('./llmConfig.js')
   const modelInfo = getAllModels().find((m) => m.id === modelId)
   const contextWindow = modelInfo?.contextWindow || 128000
-  const dynamicThreshold = Math.floor(contextWindow * 0.9)
+  const warnThreshold = Math.floor(contextWindow * 0.70)
+  const compactThreshold = Math.floor(contextWindow * 0.80)
 
-  if (session.cumulativeInputTokens >= dynamicThreshold) {
+  // Send warning to frontend at 70% (before compaction is needed)
+  if (promptTokens >= warnThreshold && promptTokens < compactThreshold && ws && sessionId) {
+    send(ws, { type: 'context_warning', sessionId, promptTokens, contextWindow } as any)
+  }
+
+  if (promptTokens >= compactThreshold) {
     try {
       const { getProviderForModel } = await import('./llmConfig.js')
       const provider = getProviderForModel(modelId)
+      // Cache-safe fork: use the conversation's *own* system prompt and full
+      // message history as the prefix, append only the summarization request.
+      // The API caches the identical prefix and only processes the new user
+      // message — matching Claude Code's compaction architecture.
       const result = await sessionStore.compactSession(key, provider ? async (messages, prevSummary) => {
         const { chatCompletion } = await import('./llmEngine.js')
+        const prevCtx = prevSummary ? `\n\nPrevious summary for continuity:\n${prevSummary}` : ''
         const resp = await chatCompletion({
           model: modelId,
           messages: [
-            { role: 'system', content: SUMMARIZATION_PROMPT },
-            { role: 'user', content: formatMessagesForSummary(messages, prevSummary) },
+            ...messages,  // [system prompt, user, assistant, tool, ...] — cached prefix
+            {
+              role: 'user',
+              content: `You are summarizing the conversation above. All tasks described are completed.\n\n${SUMMARIZATION_PROMPT}${prevCtx}`,
+            },
           ],
           temperature: 0.3,
         }, { apiKey: provider.apiKey, apiUrl: provider.apiUrl })
         return resp.content || ''
       } : undefined)
-      console.log(`[AgentLoop] Session ${key} compacted: removed ${result.removedCount} messages`)
+      console.log(`[AgentLoop] Session ${key} compacted: removed ${result.removedCount} messages (prompt was ${promptTokens}/${contextWindow})`)
       // Refresh session messages from store
       const updated = sessionStore.getSession(key)
       if (updated) session.messages = updated.messages
+
+      // Post-compaction: inject context breadcrumb so the agent knows what happened
+      if (result.removedCount > 0) {
+        const breadcrumb = `[Compaction: ${result.removedCount} earlier messages were summarized above. Current date: ${new Date().toISOString().slice(0, 10)}. The summary preserves key decisions, file changes, errors, and pending tasks.]`
+        if (updated) {
+          updated.messages.push({ role: 'system', content: breadcrumb })
+        }
+        session.messages.push({ role: 'system', content: breadcrumb })
+      }
     } catch (err) {
       console.error('[AgentLoop] Compaction failed:', err)
+      // Don't leave the counter in a broken state — reset it so the next
+      // iteration doesn't start from an inflated value.
+      session.cumulativeInputTokens = 0
+      if (sessionStore) {
+        try { sessionStore.resetInputTokens(key) } catch { /* best-effort */ }
+      }
     }
   }
 }
@@ -117,6 +161,7 @@ function formatMessagesForSummary(messages: Session['messages'], prevSummary?: s
   return text
 }
 const MAX_ITERATIONS = 8
+const MAX_ITERATIONS_PLAN_MODE = 20
 const BACKEND_API = process.env.BACKEND_API_URL || 'http://localhost:3001/api'
 
 // Built-in todo_write tool definition (Claude Code compatible)
@@ -1590,6 +1635,192 @@ function handleGenerateTodosTool(args: Record<string, unknown>, ws: WebSocket, s
     .catch((err) => `生成待办清单失败: ${err.message}`)
 }
 
+// ── Plan Mode ──
+
+const planModeSessions = new Set<string>()
+
+const PLANS_DIR = path.resolve(process.cwd(), 'plans')
+
+// Tools always available even in plan mode
+const PLAN_MODE_ALWAYS_TOOLS = new Set(['enter_plan_mode', 'save_plan', 'todo_write'])
+
+// Read-only tools available in plan mode
+const PLAN_MODE_READ_TOOLS = new Set([
+  'fetch_orders', 'fetch_biz_data', 'search_material_stock',
+  'get_pending_todos', 'list_notification_channels',
+])
+
+function isPlanMode(sessionId: string): boolean {
+  return planModeSessions.has(sessionId)
+}
+
+function enterPlanMode(sessionId: string): void {
+  planModeSessions.add(sessionId)
+}
+
+function exitPlanMode(sessionId: string): void {
+  planModeSessions.delete(sessionId)
+}
+
+const ENTER_PLAN_MODE_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'enter_plan_mode',
+    description: '进入计划模式（只读研究阶段）。在此模式下只能使用只读工具（查询数据、搜索、读取文件），不能进行任何修改操作。适用于在实施复杂任务前先研究分析、制定详细计划。计划制定完成后调用 save_plan 保存计划并退出计划模式。',
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string', description: '计划目标，简要描述你想要调研并规划的内容（如"改造定时任务模块的 schedule 选择器"）' },
+      },
+      required: ['goal'],
+    },
+  },
+}
+
+function handleEnterPlanMode(args: Record<string, unknown>, sessionId: string, ws: WebSocket): string {
+  const goal = String(args.goal || '未指定目标')
+  enterPlanMode(sessionId)
+  send(ws, { type: 'plan_mode', sessionId, phase: 'entered', goal } as any)
+
+  // Inject a strong planning instruction into the conversation.  This is
+  // appended as a system message (cache-safe — doesn't change the tool
+  // prefix) rather than filtering tools (which would invalidate the cache).
+  // Matches Claude Code's approach where plan mode is a conversation-level
+  // constraint, not a tool-list mutation.
+  const session = sessions.get(`${sessionId}:analysis-assistant`)  // best-effort lookup
+  if (session) {
+    session.messages.push({
+      role: 'system',
+      content: `[PLAN MODE ACTIVE — READ-ONLY RESEARCH PHASE]
+
+You are now in plan mode. Goal: ${goal}
+
+CRITICAL CONSTRAINT: You MUST NOT use any write/modify tools. This includes but is not limited to: save_skill, save_hook, send_notification, mark_task_complete, create_analysis_task, update_analysis_task, generate_todos, show_analysis_result, and any MCP write tools (Write, Edit, bash with write operations, etc.).
+
+ALLOWED tools: todo_write, fetch_orders, fetch_biz_data, search_material_stock, get_pending_todos, list_notification_channels, and read-only MCP tools (Read, Grep, Glob, search, list, find, etc.).  Use these to research and analyze.
+
+Workflow:
+1. Use todo_write to create research tasks
+2. Research each task thoroughly using read-only tools
+3. When research is complete, call save_plan with a structured plan document
+
+The plan document MUST follow this format:
+\`\`\`markdown
+# [Plan Title]
+
+## Context
+[Current state, background, why change is needed]
+
+## 改动
+### 1. [Change item] — \`file/path.ts\`
+**当前**：[current behavior]
+**改为**：[new behavior]
+**实现**：[how to implement]
+
+## 涉及文件
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| path/to/file | 修改/新建/删除 | description |
+
+## 验证
+1. [Verification step]
+\`\`\`
+
+The plan will be saved to agent-service/plans/ for user review before implementation.`,
+    })
+  }
+
+  return `已进入计划模式。目标：${goal}
+
+计划模式规则：
+1. 你现在处于只读研究阶段——可以查询数据、搜索、分析，但**不能修改任何代码或数据**
+2. 请先全面研究相关代码结构和影响范围，然后用 todo_write 列出研究任务并逐一完成
+3. 研究充分后，调用 save_plan 生成结构化计划文档，格式参考：
+   - # 计划标题
+   - ## Context（当前状态和背景）
+   - ## 改动（逐项描述：当前→改为→实现方式）
+   - ## 涉及文件（表格列出所有要改的文件及操作）
+   - ## 验证（验收步骤清单）
+4. 计划文档将保存到 agent-service/plans/ 目录，用户审批后可进入实施阶段`
+}
+
+const SAVE_PLAN_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'save_plan',
+    description: '保存计划文档并退出计划模式。仅在完成充分研究后调用。计划文档将保存为 markdown 文件到 plans/ 目录。调用后自动退出计划模式，恢复所有工具的完整访问权限。',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '计划标题（简洁明了，如"定时任务模块优化 + 任务督办助手绑定"）' },
+        content: { type: 'string', description: '完整的计划文档内容（Markdown 格式）。必须包含：Context（背景）、改动（逐项详细描述）、涉及文件（表格）、验证（验收步骤）四部分。' },
+      },
+      required: ['title', 'content'],
+    },
+  },
+}
+
+function handleSavePlan(args: Record<string, unknown>, sessionId: string, ws: WebSocket): string {
+  const title = String(args.title || '未命名计划')
+  const content = String(args.content || '')
+
+  if (!content.trim()) {
+    return 'Error: content 为必填项，请提供完整的计划文档内容'
+  }
+
+  try {
+    // Ensure plans directory exists
+    if (!fs.existsSync(PLANS_DIR)) {
+      fs.mkdirSync(PLANS_DIR, { recursive: true })
+    }
+
+    // Generate filename: slugify title, prefix with date
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const slug = title
+      .replace(/[^\w一-鿿]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60)
+      .toLowerCase()
+    const filename = `${dateStr}-${slug}.md`
+    const filePath = path.join(PLANS_DIR, filename)
+
+    // Build full markdown document with frontmatter
+    const fullDoc = [
+      '---',
+      `title: "${title}"`,
+      `created: ${new Date().toISOString()}`,
+      `sessionId: ${sessionId}`,
+      'status: pending',
+      '---',
+      '',
+      content,
+    ].join('\n')
+
+    fs.writeFileSync(filePath, fullDoc, 'utf-8')
+
+    exitPlanMode(sessionId)
+
+    // Notify frontend
+    send(ws, {
+      type: 'plan_saved',
+      sessionId,
+      planTitle: title,
+      planPath: filePath,
+      planContent: content,
+    } as any)
+
+    console.log(`[AgentLoop] Plan saved: ${filePath}`)
+    return `✅ 计划已保存到 \`${filePath}\`，已退出计划模式。
+
+计划标题：${title}
+计划状态：待审批（pending）
+
+用户可以在界面中查看计划内容，审批通过后即可开始实施。`
+  } catch (err: any) {
+    return `Error saving plan: ${err.message}`
+  }
+}
+
 function handleSaveHook(args: Record<string, unknown>): string {
   try {
     const hookId = String(args.hookId || '')
@@ -1899,6 +2130,7 @@ export function getOrCreateSession(sessionId: string, skillId: string, systemPro
 export function clearSession(sessionId: string): void {
   sessions.delete(sessionId)
   pendingBoundaries.delete(sessionId)
+  exitPlanMode(sessionId)
 }
 
 export function abortSession(sessionId: string): void {
@@ -2091,8 +2323,9 @@ export async function handleAgentMessage(
     return
   }
 
-  // Clear previous task list for this session when starting a new conversation
+  // Clear previous task list and plan mode for this session when starting a new conversation
   todoStores.delete(sessionId)
+  exitPlanMode(sessionId)
   send(ws, { type: 'todo_list', sessionId, todos: [] })
 
   // Send initial status with context window
@@ -2136,7 +2369,7 @@ export async function handleAgentMessage(
   pushMessage(sessionKey, session, { role: 'user', content: userMessage })
   session.updatedAt = Date.now()
 
-  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'get_pending_todos', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'update_analysis_task', 'fetch_biz_data', 'fetch_orders', 'search_material_stock', 'mark_task_complete'])
+  const BUILTIN_NAMES = new Set(['todo_write', 'save_skill', 'save_hook', 'send_notification', 'list_notification_channels', 'get_pending_todos', 'generate_todos', 'show_analysis_result', 'create_analysis_task', 'update_analysis_task', 'fetch_biz_data', 'fetch_orders', 'search_material_stock', 'mark_task_complete', 'enter_plan_mode', 'save_plan'])
     // Normalize function name for comparison (strip underscores, lowercase) to match built-in names
     const BUILTIN_NORMALIZED = new Set(Array.from(BUILTIN_NAMES).map((n) => n.toLowerCase().replace(/_/g, '')))
     const MCP_TOOLS_RAW = mcp.getTools().map((t) => ({
@@ -2163,18 +2396,28 @@ export async function handleAgentMessage(
       GET_PENDING_TODOS_TOOL,
       CREATE_ANALYSIS_TASK_TOOL,
       GENERATE_TODOS_TOOL,
+      ENTER_PLAN_MODE_TOOL,
+      SAVE_PLAN_TOOL,
       ...(enableA2ui ? [SHOW_ANALYSIS_RESULT_TOOL] : []),
       ...mcpTools,
-    ].filter((t) => enabledNames.has(t.function.name) || BUILTIN_NAMES.has(t.function.name))
+    ]
+      .filter((t) => enabledNames.has(t.function.name) || BUILTIN_NAMES.has(t.function.name))
+      // Plan mode: keep ALL tools available (cache-safe — avoids changing the
+      // tool definition prefix between turns).  The enter_plan_mode handler
+      // injects a strong system instruction that restricts the agent to
+      // research/read-only behavior without altering the cached prefix.
+      // This matches Claude Code's approach where EnterPlanMode/ExitPlanMode
+      // are tools themselves and don't modify the tool list.
 
     console.log(`[AgentLoop] Starting streaming for ${skill.name} via ${modelId}`)
 
     let iteration = 0
     let finalContent = ''
     let analysisId: string | undefined
+    let lastContextTokens = 0  // captured outside loop for final complete message
     const processedMarkers = new Set<string>()
 
-    while (iteration < MAX_ITERATIONS) {
+    while (iteration < (isPlanMode(sessionId) ? MAX_ITERATIONS_PLAN_MODE : MAX_ITERATIONS)) {
       iteration++
 
       if (iteration > 1) {
@@ -2186,6 +2429,7 @@ export async function handleAgentMessage(
       // Stream LLM response
       let streamContent = ''
       let reasoningContent = ''
+      let iterationPromptTokens = 0
       const accumulatedToolCalls: Map<number, { id: string; type: string; function: { name: string; arguments: string } }> = new Map()
 
       for await (const chunk of streamChat({
@@ -2221,8 +2465,12 @@ export async function handleAgentMessage(
           }
         }
 
-        // Track usage
+        // Track usage — capture per-iteration prompt tokens (the actual input size
+        // of this API call, which reflects the current context occupancy).
+        // totalTokens accumulates for cost reporting; iterationPromptTokens is used
+        // for compaction decisions and frontend context-usage display.
         if (chunk.usage) {
+          iterationPromptTokens = chunk.usage.promptTokens
           totalTokens.prompt += chunk.usage.promptTokens
           totalTokens.completion += chunk.usage.completionTokens
         }
@@ -2270,18 +2518,23 @@ export async function handleAgentMessage(
         }
       }
 
-      // Track tokens and check compaction after each LLM call
-      const willCompact = sessionStore?.shouldCompact(sessionKey)
+      // Track tokens and check compaction after each LLM call.
+      // Use iterationPromptTokens (the ACTUAL input size of this call) rather
+      // than totalTokens.prompt (which accumulates across iterations and would
+      // cause quadratic growth in the cumulative counter).
+      const willCompact = iterationPromptTokens >= Math.floor((contextWindow ?? 128000) * 0.8)
       if (willCompact) {
         send(ws, { type: 'compacting', sessionId, phase: 'start' })
       }
-      await trackTokensAndCompact(sessionKey, session, totalTokens.prompt, modelId)
+      await trackTokensAndCompact(sessionKey, session, iterationPromptTokens, modelId, ws, sessionId)
       if (willCompact) {
         send(ws, { type: 'compacting', sessionId, phase: 'done' })
       }
-      // Send context usage update
-      const cumulativeTokens = sessionStore?.getCumulativeInputTokens(sessionKey) || totalTokens.prompt
-      send(ws, { type: 'context_update', sessionId, promptTokens: cumulativeTokens, contextWindow })
+      // Send context usage update — use the latest call's input size as the
+      // best estimate of current context occupancy (not cumulative, which
+      // double-counts messages sent in every API call).
+      send(ws, { type: 'context_update', sessionId, promptTokens: iterationPromptTokens, contextWindow })
+      lastContextTokens = iterationPromptTokens  // capture for final complete message
 
       // Process accumulated tool calls
       const toolCallsArr = Array.from(accumulatedToolCalls.values())
@@ -2556,6 +2809,40 @@ export async function handleAgentMessage(
             continue
           }
 
+          // Handle enter_plan_mode — switch to read-only planning mode
+          if (normalizedName === 'enterplanmode') {
+            const resultText = handleEnterPlanMode(toolArgs, sessionId, ws)
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: resultText.slice(0, 200),
+            })
+            continue
+          }
+
+          // Handle save_plan — persist plan to disk and exit plan mode
+          if (normalizedName === 'saveplan') {
+            const resultText = handleSavePlan(toolArgs, sessionId, ws)
+            pushMessage(sessionKey, session, {
+              role: 'tool',
+              content: resultText,
+              toolCallId: toolCall.id,
+            })
+            send(ws, {
+              type: 'tool_result',
+              sessionId,
+              toolName,
+              toolOutput: resultText.slice(0, 200),
+            })
+            continue
+          }
+
           // Run before_tool_call hooks
           const beforeHookCtx = { sessionId, skillId: skill.id, skillName: skill.name, toolName, toolArgs }
           const beforeHookResults = await runHooks('before_tool_call', beforeHookCtx)
@@ -2744,7 +3031,7 @@ export async function handleAgentMessage(
       hasStructuredResult: !!analysisId,
       elapsed,
       totalTokens: totalTokens.prompt + totalTokens.completion,
-      promptTokens: totalTokens.prompt,
+      promptTokens: lastContextTokens || totalTokens.prompt,
       completionTokens: totalTokens.completion,
       contextWindow,
       skillName: skill.name,
