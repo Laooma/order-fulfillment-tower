@@ -497,6 +497,79 @@ function initSchema(db: Database.Database) {
     `)
   } catch (_) { /* migration already applied */ }
 
+  // Migration: update notification_channels CHECK constraint to include 'dingtalk'
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS notification_channels_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('email', 'wecom', 'feishu', 'feishu_app', 'dingtalk')),
+        config_json TEXT NOT NULL DEFAULT '{}',
+        enabled INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+      INSERT INTO notification_channels_new SELECT * FROM notification_channels;
+      DROP TABLE notification_channels;
+      ALTER TABLE notification_channels_new RENAME TO notification_channels;
+    `)
+  } catch (_) { /* migration already applied */ }
+
+  // Migration: update notification_channels CHECK constraint to include 'dingtalk_app'
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS notification_channels_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('email', 'wecom', 'feishu', 'feishu_app', 'dingtalk', 'dingtalk_app')),
+        config_json TEXT NOT NULL DEFAULT '{}',
+        enabled INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+      INSERT INTO notification_channels_new SELECT * FROM notification_channels;
+      DROP TABLE notification_channels;
+      ALTER TABLE notification_channels_new RENAME TO notification_channels;
+    `)
+  } catch (_) { /* migration already applied */ }
+
+  // Migration: add subagent_id to notification_channels
+  try {
+    db.exec(`DROP TABLE IF EXISTS notification_channels_new`)
+    db.exec(`
+      CREATE TABLE notification_channels_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('email', 'wecom', 'feishu', 'feishu_app', 'dingtalk', 'dingtalk_app')),
+        config_json TEXT NOT NULL DEFAULT '{}',
+        enabled INTEGER DEFAULT 1,
+        subagent_id TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      );
+      INSERT INTO notification_channels_new (id, name, type, config_json, enabled, created_at, updated_at)
+        SELECT id, name, type, config_json, enabled, created_at, updated_at FROM notification_channels;
+      DROP TABLE notification_channels;
+      ALTER TABLE notification_channels_new RENAME TO notification_channels;
+    `)
+  } catch (_) { /* migration already applied */ }
+
+  // Create subagents table
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS subagents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        system_prompt TEXT NOT NULL DEFAULT '',
+        icon TEXT DEFAULT 'bot',
+        color TEXT DEFAULT 'ai-blue',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+      )
+    `)
+  } catch (_) { /* migration already applied */ }
+
   seedRbac(db)
 }
 
@@ -977,22 +1050,23 @@ export function getNotificationChannel(id: string) {
   return d.prepare('SELECT * FROM notification_channels WHERE id = ?').get(id) as any
 }
 
-export function createNotificationChannel(data: { id: string; name: string; type: string; config_json?: string }) {
+export function createNotificationChannel(data: { id: string; name: string; type: string; config_json?: string; subagent_id?: string | null }) {
   const d = getDb()
   d.prepare(`
-    INSERT INTO notification_channels (id, name, type, config_json)
-    VALUES (?, ?, ?, ?)
-  `).run(data.id, data.name, data.type, data.config_json || '{}')
+    INSERT INTO notification_channels (id, name, type, config_json, subagent_id)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(data.id, data.name, data.type, data.config_json || '{}', data.subagent_id || null)
   return { success: true }
 }
 
-export function updateNotificationChannel(id: string, data: { name?: string; config_json?: string; enabled?: number }) {
+export function updateNotificationChannel(id: string, data: { name?: string; config_json?: string; enabled?: number; subagent_id?: string | null }) {
   const d = getDb()
   const updates: string[] = []
   const values: any[] = []
   if (data.name !== undefined) { updates.push('name = ?'); values.push(data.name) }
   if (data.config_json !== undefined) { updates.push('config_json = ?'); values.push(data.config_json) }
   if (data.enabled !== undefined) { updates.push('enabled = ?'); values.push(data.enabled) }
+  if (data.subagent_id !== undefined) { updates.push('subagent_id = ?'); values.push(data.subagent_id) }
   if (updates.length === 0) return { success: false, error: 'No fields to update' }
   updates.push("updated_at = datetime('now','localtime')")
   values.push(id)
@@ -1003,6 +1077,49 @@ export function updateNotificationChannel(id: string, data: { name?: string; con
 export function deleteNotificationChannel(id: string) {
   const d = getDb()
   const result = d.prepare('DELETE FROM notification_channels WHERE id = ?').run(id)
+  return { success: result.changes > 0 }
+}
+
+// ── Subagents ──
+
+export function listSubagents() {
+  const d = getDb()
+  return d.prepare('SELECT * FROM subagents ORDER BY created_at ASC').all()
+}
+
+export function getSubagent(id: string) {
+  const d = getDb()
+  return d.prepare('SELECT * FROM subagents WHERE id = ?').get(id) as any
+}
+
+export function createSubagent(data: { id: string; name: string; description?: string; system_prompt?: string; icon?: string; color?: string; enabled_skills?: string; enabled_tools?: string }) {
+  const d = getDb()
+  d.prepare(`INSERT INTO subagents (id, name, description, system_prompt, icon, color, enabled_skills, enabled_tools)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    data.id, data.name, data.description || '', data.system_prompt || '',
+    data.icon || 'bot', data.color || 'ai-blue',
+    data.enabled_skills || '[]', data.enabled_tools || '[]'
+  )
+  return getSubagent(data.id)
+}
+
+export function updateSubagent(id: string, data: { name?: string; description?: string; system_prompt?: string; icon?: string; color?: string; enabled_skills?: string; enabled_tools?: string }) {
+  const d = getDb()
+  const sets: string[] = []
+  const vals: any[] = []
+  for (const [k, v] of Object.entries(data)) {
+    if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v) }
+  }
+  if (sets.length === 0) return getSubagent(id)
+  sets.push("updated_at = datetime('now','localtime')")
+  vals.push(id)
+  d.prepare(`UPDATE subagents SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+  return getSubagent(id)
+}
+
+export function deleteSubagent(id: string) {
+  const d = getDb()
+  const result = d.prepare('DELETE FROM subagents WHERE id = ?').run(id)
   return { success: result.changes > 0 }
 }
 

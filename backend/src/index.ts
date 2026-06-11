@@ -14,6 +14,7 @@ import clawRouter from './routes/claw'
 import rbacRouter from './routes/rbac'
 import authRouter from './routes/auth'
 import { notificationsRouter } from './routes/notifications'
+import dingtalkRouter from './routes/dingtalk'
 import { authMiddleware } from './middleware/auth'
 
 const app = express()
@@ -25,6 +26,18 @@ const PORT = process.env.PORT || 3001
 // Middleware
 app.use(cors({ origin: '*' }))
 app.use(express.json())
+
+// ── Request debug logger (capture all requests to help debug DingTalk callback) ──
+app.use((req, _res, next) => {
+  const bodyStr = req.body ? JSON.stringify(req.body).slice(0, 300) : '(no body)'
+  const logLine = `[REQ ${new Date().toISOString()}] ${req.method} ${req.originalUrl} | query: ${JSON.stringify(req.query)} | headers: timestamp=${req.headers.timestamp}, sign=${req.headers.sign}, signature=${req.headers.signature} | body: ${bodyStr}`
+  console.log(logLine)
+  next()
+})
+
+// DingTalk robot callback (no auth required — must be before authMiddleware)
+app.use('/api', dingtalkRouter)
+
 app.use(authMiddleware)
 
 // Health check

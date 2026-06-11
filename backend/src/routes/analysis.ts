@@ -181,7 +181,7 @@ router.post('/', requireOperation('create_analysis'), (req, res) => {
     db.prepare(`
       INSERT INTO analysis_tasks (id, title, description, agent, initiator, status, created_at, completed_at, skill_id, skill_name)
       VALUES (?, ?, ?, ?, '系统', 'analyzing', ?, '', ?, ?)
-    `).run(id, title || '新分析任务', `分析 ${orders?.length || 0} 个订单的履约状态`, agent || 'AI智能体', new Date().toLocaleString('zh-CN'), skillId || '', skillName || '')
+    `).run(id, title || '新分析任务', `分析 ${orders?.length || 0} 个订单的履约状态`, agent || 'AI Skill', new Date().toLocaleString('zh-CN'), skillId || '', skillName || '')
   } catch (err) {
     console.error('[Analysis] Create error:', err)
   }
@@ -192,7 +192,7 @@ router.post('/', requireOperation('create_analysis'), (req, res) => {
     title: title || '新分析任务',
     taskType: 'agent任务',
     description: `分析 ${orders?.length || 0} 个订单的履约状态`,
-    agent: agent || 'AI智能体',
+    agent: agent || 'AI Skill',
     initiator: 'Hi·金星米',
     status: 'analyzing',
     createdAt: new Date().toLocaleString('zh-CN'),

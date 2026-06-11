@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Cpu, FileText, Building2, Users, Shield, Code2, Server, Puzzle, Clock, Bell, Wrench, BookOpen, Plus, Trash2, Edit3, Save, X, ChevronRight, ChevronDown, Play, ToggleLeft, ToggleRight, Mail, Send, MessageSquare, Pencil } from 'lucide-react'
+import { Cpu, FileText, Building2, Users, Shield, Code2, Server, Puzzle, Clock, Bell, Wrench, BookOpen, Plus, Trash2, Edit3, Save, X, ChevronRight, ChevronDown, Play, ToggleLeft, ToggleRight, Mail, Send, MessageSquare, Pencil, Search, Check, AlertCircle, Copy, RefreshCw, Info } from 'lucide-react'
 import { api, type Skill, type Hook, type McpServer, type Plugin, type CronTask, type ToolConfig } from '../lib/api'
 import MarkdownEditor from '../components/MarkdownEditor'
 import { getSkillIcon, skillIconNames } from '../lib/skillIcons'
@@ -38,6 +38,7 @@ const allSettingsTabs = [
   { key: 'roles', label: '角色与权限', icon: Shield, menuId: 'menu_settings_roles' },
   { key: 'cron-tasks', label: '定时任务', icon: Clock, menuId: 'menu_settings_cron' },
   { key: 'notifications', label: '通知管理', icon: Bell, menuId: 'menu_settings_notifications' },
+  { key: 'subagents', label: 'Subagent 管理', icon: MessageSquare, menuId: 'menu_settings_notifications' },
   { key: 'tools', label: 'Tool 管理', icon: Wrench, menuId: 'menu_settings_tools' },
 ]
 
@@ -97,6 +98,7 @@ export default function SettingsPage() {
             {activeKey === 'roles' && <RolePanel />}
             {activeKey === 'cron-tasks' && <CronTaskPanel />}
             {activeKey === 'notifications' && <NotificationPanel />}
+            {activeKey === 'subagents' && <SubagentPanel />}
             {activeKey === 'tools' && <ToolConfigPanel />}
           </div>
         </div>
@@ -861,7 +863,7 @@ function SkillConfigPanel() {
             <input className="settings-form-input" value={createForm.id} onChange={(e) => setCreateForm({ ...createForm, id: e.target.value })} placeholder="如：my-agent" />
           </FormGroup>
           <FormGroup label="名称">
-            <input className="settings-form-input" value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} placeholder="如：我的智能体" />
+            <input className="settings-form-input" value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} placeholder="如：我的Skill" />
           </FormGroup>
           <FormGroup label="描述">
             <input className="settings-form-input" value={createForm.description} onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })} placeholder="简要描述该 Skill 的功能" />
@@ -1121,7 +1123,7 @@ function HookConfigPanel() {
                 </select>
               </FormGroup>
               <FormGroup label="Matcher（匹配规则，* 匹配所有）">
-                <input className="settings-form-input" value={editorData.matcher} onChange={(e) => setEditorData({ ...editorData, matcher: e.target.value })} placeholder="* 或工具名/智能体名的正则" />
+                <input className="settings-form-input" value={editorData.matcher} onChange={(e) => setEditorData({ ...editorData, matcher: e.target.value })} placeholder="* 或工具名/Skill名的正则" />
               </FormGroup>
               <FormGroup label="启用">
                 <label className="settings-toggle-wrap">
@@ -2272,7 +2274,7 @@ function RolePanel() {
         return (
           <div className="permission-tab-content">
             <div className="permission-tab-header">
-              <span>Skill 权限 — 控制角色可以使用的智能体</span>
+              <span>Skill 权限 — 控制角色可以使用的Skill</span>
               <button className="btn btn-primary" style={{ height: 26, fontSize: 11 }} onClick={saveSkillPermissions} disabled={savingSkillPerm}><Save size={11} /> 保存</button>
             </div>
             <div className="skill-perm-list">
@@ -3065,6 +3067,8 @@ const CHANNEL_TYPES: Record<string, { label: string; desc: string }> = {
   feishu_webhook: { label: '飞书 Webhook', desc: '通过飞书机器人 Webhook 发送消息' },
   feishu_app: { label: '飞书应用', desc: '通过飞书自建应用发送消息' },
   wecom: { label: '企业微信', desc: '通过企业微信机器人 Webhook 发送消息' },
+  dingtalk: { label: '钉钉群机器人', desc: '通过钉钉群机器人 Webhook 发送消息' },
+  dingtalk_app: { label: '钉钉企业应用', desc: '通过钉钉自建应用发送工作通知' },
 }
 
 function NotificationPanel() {
@@ -3075,6 +3079,10 @@ function NotificationPanel() {
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // ── Subagent binding ──
+  const [subagentId, setSubagentId] = useState('')
+  const [subagentList, setSubagentList] = useState<any[]>([])
 
   // ── Editor tabs ──
   const [activeTab, setActiveTab] = useState('config')
@@ -3092,9 +3100,13 @@ function NotificationPanel() {
   const [emailFrom, setEmailFrom] = useState(''); const [emailSecure, setEmailSecure] = useState(false)
   // Bot config
   const [webhookUrl, setWebhookUrl] = useState('')
+  const [dingtalkSecret, setDingtalkSecret] = useState('')
   // Feishu App config
   const [feishuAppId, setFeishuAppId] = useState(''); const [feishuAppSecret, setFeishuAppSecret] = useState('')
   const [feishuReceiveIdType, setFeishuReceiveIdType] = useState('open_id'); const [feishuReceiveId, setFeishuReceiveId] = useState('')
+  // DingTalk App config
+  const [dingtalkAppKey, setDingtalkAppKey] = useState(''); const [dingtalkAppSecret, setDingtalkAppSecret] = useState('')
+  const [dingtalkAgentId, setDingtalkAgentId] = useState(''); const [dingtalkUseridList, setDingtalkUseridList] = useState('')
 
   // Test/send state
   const [testing, setTesting] = useState(false); const [testResult, setTestResult] = useState<string | null>(null)
@@ -3126,6 +3138,9 @@ function NotificationPanel() {
       .then((res) => setChannels(res.data))
       .catch(console.error)
       .finally(() => setLoading(false))
+    api.subagents.list()
+      .then((res) => setSubagentList(res.data || []))
+      .catch(console.error)
   }, [])
 
   const loadTemplates = useCallback(() => {
@@ -3168,19 +3183,36 @@ function NotificationPanel() {
     setActiveTab('config')
     setTestResult(null)
     setFormName(ch.name); setFormType(ch.type); setFormEnabled(!!ch.enabled)
+    setSubagentId(ch.subagent_id || '')
     const cfg = JSON.parse(ch.config_json || '{}')
     if (ch.type === 'email') {
       setEmailHost(cfg.host || ''); setEmailPort(cfg.port || 587); setEmailUser(cfg.user || '')
       setEmailPassword(cfg.password || ''); setEmailFrom(cfg.from || ''); setEmailSecure(cfg.secure || false)
-      setWebhookUrl(''); setFeishuAppId(''); setFeishuAppSecret(''); setFeishuReceiveIdType('open_id'); setFeishuReceiveId('')
+      setWebhookUrl(''); setDingtalkSecret(''); setDingtalkAppKey(''); setDingtalkAppSecret(''); setDingtalkAgentId(''); setDingtalkUseridList('')
+      setFeishuAppId(''); setFeishuAppSecret(''); setFeishuReceiveIdType('open_id'); setFeishuReceiveId('')
       setSendTo(cfg.user || cfg.from || '')
     } else if (ch.type === 'feishu_app') {
       setFeishuAppId(cfg.app_id || ''); setFeishuAppSecret(cfg.app_secret || '')
       setFeishuReceiveIdType(cfg.receive_id_type || 'open_id'); setFeishuReceiveId(cfg.receive_id || '')
-      setWebhookUrl(''); setEmailHost(''); setEmailPort(587); setEmailUser(''); setEmailPassword(''); setEmailFrom(''); setEmailSecure(false)
+      setWebhookUrl(''); setDingtalkSecret(''); setDingtalkAppKey(''); setDingtalkAppSecret(''); setDingtalkAgentId(''); setDingtalkUseridList('')
+      setEmailHost(''); setEmailPort(587); setEmailUser(''); setEmailPassword(''); setEmailFrom(''); setEmailSecure(false)
       setSendTo(cfg.receive_id || '')
+    } else if (ch.type === 'dingtalk') {
+      setWebhookUrl(cfg.webhook_url || ''); setDingtalkSecret(cfg.secret || '')
+      setDingtalkAppKey(''); setDingtalkAppSecret(''); setDingtalkAgentId(''); setDingtalkUseridList('')
+      setEmailHost(''); setEmailPort(587); setEmailUser(''); setEmailPassword(''); setEmailFrom(''); setEmailSecure(false)
+      setFeishuAppId(''); setFeishuAppSecret(''); setFeishuReceiveIdType('open_id'); setFeishuReceiveId('')
+      setSendTo('')
+    } else if (ch.type === 'dingtalk_app') {
+      setDingtalkAppKey(cfg.app_key || cfg.client_id || ''); setDingtalkAppSecret(cfg.app_secret || cfg.client_secret || '')
+      setDingtalkAgentId(String(cfg.agent_id || '')); setDingtalkUseridList(cfg.userid_list || '')
+      setWebhookUrl(''); setDingtalkSecret('')
+      setEmailHost(''); setEmailPort(587); setEmailUser(''); setEmailPassword(''); setEmailFrom(''); setEmailSecure(false)
+      setFeishuAppId(''); setFeishuAppSecret(''); setFeishuReceiveIdType('open_id'); setFeishuReceiveId('')
+      setSendTo(cfg.userid_list || '')
     } else {
       setWebhookUrl(cfg.webhook_url || '')
+      setDingtalkSecret(''); setDingtalkAppKey(''); setDingtalkAppSecret(''); setDingtalkAgentId(''); setDingtalkUseridList('')
       setEmailHost(''); setEmailPort(587); setEmailUser(''); setEmailPassword(''); setEmailFrom(''); setEmailSecure(false)
       setFeishuAppId(''); setFeishuAppSecret(''); setFeishuReceiveIdType('open_id'); setFeishuReceiveId('')
       setSendTo('')
@@ -3196,8 +3228,12 @@ function NotificationPanel() {
         ? { host: emailHost, port: emailPort, user: emailUser, password: emailPassword, from: emailFrom, secure: emailSecure }
         : formType === 'feishu_app'
         ? { app_id: feishuAppId, app_secret: feishuAppSecret, receive_id_type: feishuReceiveIdType, receive_id: feishuReceiveId }
+        : formType === 'dingtalk'
+        ? { webhook_url: webhookUrl, secret: dingtalkSecret }
+        : formType === 'dingtalk_app'
+        ? { app_key: dingtalkAppKey, app_secret: dingtalkAppSecret, agent_id: dingtalkAgentId, userid_list: dingtalkUseridList }
         : { webhook_url: webhookUrl }
-      await api.notifications.channels.update(selectedChannel.id, { name: formName, config, enabled: formEnabled })
+      await api.notifications.channels.update(selectedChannel.id, { name: formName, config, enabled: formEnabled, subagentId: subagentId || null })
       setSaved(true); setTimeout(() => setSaved(false), 2000); loadChannels()
     } catch (err) { alert('保存失败: ' + (err as Error).message) }
     finally { setSaving(false) }
@@ -3285,6 +3321,7 @@ function NotificationPanel() {
   const wizardBuildConfig = () => {
     if (wizardType === 'email') return wizardConfig
     if (wizardType === 'feishu_app') return wizardConfig
+    if (wizardType === 'dingtalk_app') return { app_key: wizardConfig.app_key || '', app_secret: wizardConfig.app_secret || '', agent_id: wizardConfig.agent_id || '', userid_list: wizardConfig.userid_list || '' }
     return { webhook_url: wizardConfig.webhook_url || '' }
   }
 
@@ -3334,7 +3371,7 @@ function NotificationPanel() {
       {wizardStep === 1 && (
         <div className="notify-wizard-types">
           {Object.entries(CHANNEL_TYPES).map(([key, info]) => {
-            const Icon = key === 'email' ? Mail : key === 'feishu_app' ? Send : MessageSquare
+            const Icon = key === 'email' ? Mail : key === 'feishu_app' ? Send : key.startsWith('dingtalk') ? Bell : MessageSquare
             return (
               <button key={key} className={`notify-type-card ${wizardType === key ? 'selected' : ''}`} onClick={() => setWizardType(key)}>
                 <span className="notify-type-card-icon"><Icon size={24} /></span>
@@ -3376,6 +3413,18 @@ function NotificationPanel() {
                 </select>
               </FormGroup>
               <FormGroup label="接收人 ID"><input className="settings-form-input" value={wizardConfig.receive_id || ''} onChange={e => setWizardConfig({ ...wizardConfig, receive_id: e.target.value })} /></FormGroup>
+            </>
+          ) : wizardType === 'dingtalk' ? (
+            <>
+              <FormGroup label="Webhook URL"><input className="settings-form-input" value={wizardConfig.webhook_url || ''} onChange={e => setWizardConfig({ ...wizardConfig, webhook_url: e.target.value })} placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" /></FormGroup>
+              <FormGroup label="加签 Secret（可选）"><input className="settings-form-input" type="password" value={wizardConfig.secret || ''} onChange={e => setWizardConfig({ ...wizardConfig, secret: e.target.value })} placeholder="如启用了加签安全设置，请填写" /></FormGroup>
+            </>
+          ) : wizardType === 'dingtalk_app' ? (
+            <>
+              <FormGroup label="Client ID (AppKey)"><input className="settings-form-input" value={wizardConfig.app_key || ''} onChange={e => setWizardConfig({ ...wizardConfig, app_key: e.target.value })} placeholder="ding7eo42jfnhrqzzfmu" /></FormGroup>
+              <FormGroup label="Client Secret (AppSecret)"><input className="settings-form-input" type="password" value={wizardConfig.app_secret || ''} onChange={e => setWizardConfig({ ...wizardConfig, app_secret: e.target.value })} /></FormGroup>
+              <FormGroup label="Agent ID"><input className="settings-form-input" value={wizardConfig.agent_id || ''} onChange={e => setWizardConfig({ ...wizardConfig, agent_id: e.target.value })} placeholder="4667597726" /></FormGroup>
+              <FormGroup label="接收人 UserID 列表"><input className="settings-form-input" value={wizardConfig.userid_list || ''} onChange={e => setWizardConfig({ ...wizardConfig, userid_list: e.target.value })} placeholder="多个用逗号分隔，如：user1,user2" /></FormGroup>
             </>
           ) : (
             <FormGroup label="Webhook URL">
@@ -3471,6 +3520,18 @@ function NotificationPanel() {
           </FormGroup>
           <FormGroup label="接收人 ID"><input className="settings-form-input" value={feishuReceiveId} onChange={e => setFeishuReceiveId(e.target.value)} /></FormGroup>
         </>
+      ) : formType === 'dingtalk' ? (
+        <>
+          <FormGroup label="Webhook URL"><input className="settings-form-input" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" /></FormGroup>
+          <FormGroup label="加签 Secret（可选）"><input className="settings-form-input" type="password" value={dingtalkSecret} onChange={e => setDingtalkSecret(e.target.value)} placeholder="如启用了加签安全设置，请填写" /></FormGroup>
+        </>
+      ) : formType === 'dingtalk_app' ? (
+        <>
+          <FormGroup label="Client ID (AppKey)"><input className="settings-form-input" value={dingtalkAppKey} onChange={e => setDingtalkAppKey(e.target.value)} placeholder="ding7eo42jfnhrqzzfmu" /></FormGroup>
+          <FormGroup label="Client Secret (AppSecret)"><input className="settings-form-input" type="password" value={dingtalkAppSecret} onChange={e => setDingtalkAppSecret(e.target.value)} /></FormGroup>
+          <FormGroup label="Agent ID"><input className="settings-form-input" value={dingtalkAgentId} onChange={e => setDingtalkAgentId(e.target.value)} placeholder="4667597726" /></FormGroup>
+          <FormGroup label="接收人 UserID 列表"><input className="settings-form-input" value={dingtalkUseridList} onChange={e => setDingtalkUseridList(e.target.value)} placeholder="多个用逗号分隔，如：user1,user2" /></FormGroup>
+        </>
       ) : (
         <FormGroup label="Webhook URL"><input className="settings-form-input" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} /></FormGroup>
       )}
@@ -3481,6 +3542,18 @@ function NotificationPanel() {
           <span className="settings-toggle-slider" />
           <span className="settings-toggle-label">启用后该通知渠道可正常发送消息</span>
         </label>
+      </FormGroup>
+
+      <FormGroup label="绑定 Subagent（可选）">
+        <select className="settings-form-input" value={subagentId} onChange={e => setSubagentId(e.target.value)}>
+          <option value="">不绑定（使用默认意图识别）</option>
+          {subagentList.map((s: any) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+        <span className="settings-form-hint" style={{ fontSize: 11, color: 'var(--color-muted)' }}>
+          绑定后，通过此渠道收到的消息将使用该 Subagent 的身份和提示词
+        </span>
       </FormGroup>
 
       <div className="notification-test-section">
@@ -3711,6 +3784,327 @@ function NotificationPanel() {
       {/* Modals */}
       {showWizard && renderWizard()}
       {showTplCreate && renderTplModal()}
+    </div>
+  )
+}
+
+// ── Subagent Panel ──
+
+// ── Subagent Panel (redesigned) ──
+
+const SUBAGENT_COLORS = [
+  { id: 'ai-purple', label: '紫色', hex: '#8b5cf6' },
+  { id: 'ai-blue', label: '蓝色', hex: '#3b82f6' },
+  { id: 'ai-green', label: '绿色', hex: '#10b981' },
+  { id: 'ai-orange', label: '橙色', hex: '#f59e0b' },
+  { id: 'red', label: '红色', hex: '#ef4444' },
+]
+
+const SUBAGENT_ICONS = [
+  { id: 'bot', emoji: '🤖', label: '机器人' },
+  { id: 'search', emoji: '🔍', label: '搜索' },
+  { id: 'chart', emoji: '📊', label: '图表' },
+  { id: 'clipboard', emoji: '📋', label: '清单' },
+  { id: 'package', emoji: '📦', label: '包裹' },
+  { id: 'bell', emoji: '🔔', label: '通知' },
+  { id: 'shield', emoji: '🛡️', label: '安全' },
+  { id: 'lightbulb', emoji: '💡', label: '灵感' },
+]
+
+function SubagentPanel() {
+  const [subagents, setSubagents] = useState<any[]>([])
+  const [selected, setSelected] = useState<any | null>(null)
+  const [form, setForm] = useState({ id: '', name: '', description: '', system_prompt: '', icon: 'bot', color: 'ai-purple', enabled_skills: '[]', enabled_tools: '[]' })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showNewForm, setShowNewForm] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [activeTab, setActiveTab] = useState<'basic' | 'prompt' | 'skills'>('basic')
+  const [allSkills, setAllSkills] = useState<any[]>([])
+  const [allTools, setAllTools] = useState<any[]>([])
+
+  const load = async () => {
+    try {
+      const res = await api.subagents.list()
+      setSubagents(res.data || [])
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => { load(); api.agent.skills().then(r => setAllSkills(r?.skills || r?.data || (Array.isArray(r) ? r : []))).catch(() => {}); api.agent.tools().then(r => setAllTools(r?.tools || r?.data || (Array.isArray(r) ? r : []))).catch(() => {}); }, [])
+
+  const filteredSubagents = subagents.filter(s =>
+    !searchQuery || s.name.includes(searchQuery) || s.id.includes(searchQuery) || (s.description || '').includes(searchQuery)
+  )
+
+  const resetForm = () => {
+    setSelected(null); setShowNewForm(false); setActiveTab('basic')
+    setForm({ id: '', name: '', description: '', system_prompt: '', icon: 'bot', color: 'ai-purple', enabled_skills: '[]', enabled_tools: '[]' })
+    setSaved(false)
+  }
+
+  const selectSubagent = (s: any) => {
+    setSelected(s); setShowNewForm(false); setActiveTab('basic')
+    setForm({ id: s.id, name: s.name, description: s.description || '', system_prompt: s.system_prompt || '', icon: s.icon || 'bot', color: s.color || 'ai-purple', enabled_skills: s.enabled_skills || '[]', enabled_tools: s.enabled_tools || '[]' })
+    setSaved(false)
+  }
+
+  const handleSave = async () => {
+    if (!form.id || !form.name) return
+    try {
+      if (selected) {
+        await api.subagents.update(form.id, { name: form.name, description: form.description, system_prompt: form.system_prompt, icon: form.icon, color: form.color, enabled_skills: form.enabled_skills, enabled_tools: form.enabled_tools })
+      } else {
+        await api.subagents.create(form)
+      }
+      await load(); setSaved(true); setTimeout(() => setSaved(false), 2000)
+      if (showNewForm) { setShowNewForm(false); setSelected(subagents.find(s => s.id === form.id) || { id: form.id, name: form.name, description: form.description, system_prompt: form.system_prompt, icon: form.icon, color: form.color, enabled_skills: form.enabled_skills, enabled_tools: form.enabled_tools }) }
+    } catch (err: any) { alert('保存失败：' + (err.message || '未知错误')) }
+  }
+
+  const handleDelete = async () => {
+    if (!selected) return
+    try { await api.subagents.delete(selected.id); setShowDeleteConfirm(false); await load(); resetForm() }
+    catch (err: any) { alert('删除失败：' + (err.message || '未知错误')) }
+  }
+
+  const toggleSkill = (skillId: string) => {
+    let skills: string[] = []
+    try { skills = JSON.parse(form.enabled_skills) } catch {}
+    const next = skills.includes(skillId) ? skills.filter(s => s !== skillId) : [...skills, skillId]
+    setForm({ ...form, enabled_skills: JSON.stringify(next) })
+  }
+
+  const toggleTool = (toolName: string) => {
+    let tools: string[] = []
+    try { tools = JSON.parse(form.enabled_tools) } catch {}
+    const next = tools.includes(toolName) ? tools.filter(t => t !== toolName) : [...tools, toolName]
+    setForm({ ...form, enabled_tools: JSON.stringify(next) })
+  }
+
+  const enabledSkills: string[] = (() => { try { return JSON.parse(form.enabled_skills) } catch { return [] } })()
+  const enabledTools: string[] = (() => { try { return JSON.parse(form.enabled_tools) } catch { return [] } })()
+
+  const handleCopyPrompt = () => { navigator.clipboard.writeText(form.system_prompt); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+  const charCount = form.system_prompt.length
+  const lineCount = form.system_prompt.split('\n').length
+  const iconDisplay = SUBAGENT_ICONS.find(i => i.id === form.icon)?.emoji || '🤖'
+  const colorDisplay = SUBAGENT_COLORS.find(c => c.id === form.color)?.hex || '#8b5cf6'
+
+  const hasSelected = !!(selected || showNewForm)
+
+  return (
+    <div className="notification-panel">
+      {/* ── Left sidebar ── */}
+      <div className="notification-channel-list">
+        <div className="notification-channel-list-header">
+          <h3 className="notification-channel-list-title">Subagent 列表</h3>
+          <button className="btn btn-primary" style={{ height: 28, fontSize: 11, padding: '0 10px' }} onClick={() => { resetForm(); setShowNewForm(true) }}>
+            <Plus size={14} /> 新建
+          </button>
+        </div>
+        <div style={{ padding: '8px 12px' }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-muted)' }} />
+            <input className="settings-form-input" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="搜索 Subagent..." style={{ paddingLeft: 28, height: 30, fontSize: 12 }} />
+          </div>
+        </div>
+        <div className="notification-channel-items">
+          {filteredSubagents.map((s: any) => {
+            const ico = SUBAGENT_ICONS.find(i => i.id === (s.icon || 'bot'))?.emoji || '🤖'
+            const colorHex = SUBAGENT_COLORS.find(c => c.id === (s.color || 'ai-purple'))?.hex || '#8b5cf6'
+            const isActive = selected?.id === s.id && !showNewForm
+            return (
+              <button key={s.id} className={`notification-channel-item ${isActive ? 'active' : ''}`} onClick={() => selectSubagent(s)}>
+                <span className="notification-channel-item-type"><span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 8, background: colorHex + '18', fontSize: 15 }}>{ico}</span></span>
+                <span className="notification-channel-item-info"><span className="notification-channel-item-name">{s.name}</span><span className="notification-channel-item-id">{s.id}</span></span>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: colorHex, flexShrink: 0 }} />
+              </button>
+            )
+          })}
+          {filteredSubagents.length === 0 && (
+            <div style={{ padding: '40px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: 32, marginBottom: 8, opacity: 0.4 }}>{searchQuery ? '🔍' : '📋'}</div>
+              <div style={{ fontSize: 13, color: 'var(--color-muted)', marginBottom: 4 }}>{searchQuery ? '无匹配的 Subagent' : '还没有创建 Subagent'}</div>
+              <div style={{ fontSize: 11, color: 'var(--color-muted)', opacity: 0.7 }}>{searchQuery ? '尝试其他关键词搜索' : '创建一个 Subagent，为不同渠道定制 AI 身份'}</div>
+            </div>
+          )}
+        </div>
+        <div style={{ padding: '8px 12px', fontSize: 10, color: 'var(--color-muted)', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between' }}>
+          <span>共 {subagents.length} 个 Subagent</span>
+          {searchQuery && <span>筛选出 {filteredSubagents.length} 个</span>}
+        </div>
+      </div>
+
+      {/* ── Right panel ── */}
+      <div className="notification-detail" style={{ background: 'var(--color-surface)' }}>
+        {!hasSelected ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 12, color: 'var(--color-muted)' }}>
+            <div style={{ fontSize: 48, opacity: 0.3 }}>📋</div>
+            <div style={{ fontSize: 14 }}>选择一个 Subagent 查看或编辑</div>
+            <button className="btn btn-primary" style={{ height: 30, fontSize: 12 }} onClick={() => { resetForm(); setShowNewForm(true) }}><Plus size={14} /> 新建 Subagent</button>
+          </div>
+        ) : (
+          <>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 10, background: colorDisplay + '18', fontSize: 18 }}>{iconDisplay}</span>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{showNewForm ? '新建 Subagent' : form.name}</div>
+                  {selected && !showNewForm && <div style={{ fontSize: 11, color: 'var(--color-muted)', fontFamily: 'monospace' }}>{form.id}</div>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {saved && <span style={{ fontSize: 11, color: 'var(--color-success)' }}><Check size={12} style={{ display: 'inline', marginRight: 2 }} />已保存</span>}
+                <button className="btn btn-primary" style={{ height: 28, fontSize: 11, padding: '0 12px' }} onClick={handleSave} disabled={!form.id || !form.name}><Save size={12} /> {selected && !showNewForm ? '保存' : '创建'}</button>
+                <button className="btn btn-ghost" style={{ height: 28, fontSize: 11 }} onClick={resetForm}>取消</button>
+                {selected && !showNewForm && (
+                  <button className="btn btn-ghost" style={{ height: 28, fontSize: 11, color: 'var(--color-danger)', marginLeft: 8 }} onClick={() => setShowDeleteConfirm(true)}><Trash2 size={12} /></button>
+                )}
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', padding: '0 20px' }}>
+              {[
+                { key: 'basic' as const, label: '基本信息', icon: '📝' },
+                { key: 'prompt' as const, label: 'Agent 描述', icon: '📄' },
+                { key: 'skills' as const, label: 'Skill / Tool', icon: '🔧' },
+              ].map(tab => (
+                <button key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  style={{
+                    padding: '10px 16px', fontSize: 12, fontWeight: activeTab === tab.key ? 600 : 400,
+                    color: activeTab === tab.key ? 'var(--color-text)' : 'var(--color-muted)',
+                    borderBottom: activeTab === tab.key ? '2px solid ' + colorDisplay : '2px solid transparent',
+                    background: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none',
+                    cursor: 'pointer', transition: 'all .15s',
+                  }}>
+                  {tab.icon} {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+            <div className="notification-detail-body">
+              <div className="notification-editor-body" style={{ maxWidth: 640 }}>
+
+                {/* ── Tab: Basic Info ── */}
+                {activeTab === 'basic' && <>
+                  <div className="settings-form-group">
+                    <label className="settings-form-label">ID <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                    <input className="settings-form-input" value={form.id} onChange={e => setForm({ ...form, id: e.target.value.replace(/[^a-z0-9-]/g, '').slice(0, 40) })} disabled={!!selected} placeholder="英文标识，如：order-analyst" />
+                    <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>{selected ? '创建后不可修改' : '小写字母、数字、连字符，最长 40 位'}</span>
+                  </div>
+                  <div className="settings-form-group">
+                    <label className="settings-form-label">名称 <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                    <input className="settings-form-input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value.slice(0, 30) })} placeholder="如：订单分析专家" />
+                    <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>{form.name.length}/30 字符</span>
+                  </div>
+                  <div className="settings-form-group">
+                    <label className="settings-form-label">描述</label>
+                    <input className="settings-form-input" value={form.description} onChange={e => setForm({ ...form, description: e.target.value.slice(0, 80) })} placeholder="用一句话描述这个 Subagent 的作用" />
+                  </div>
+                  <div style={{ display: 'flex', gap: 16 }}>
+                    <div className="settings-form-group" style={{ flex: 1 }}>
+                      <label className="settings-form-label">图标</label>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {SUBAGENT_ICONS.map(ico => (
+                          <button key={ico.id} onClick={() => setForm({ ...form, icon: ico.id })} title={ico.label}
+                            style={{ width: 34, height: 34, borderRadius: 8, border: form.icon === ico.id ? `2px solid ${colorDisplay}` : '2px solid transparent', background: form.icon === ico.id ? colorDisplay + '14' : 'var(--color-neutral-bg)', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}>{ico.emoji}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="settings-form-group" style={{ flex: 1 }}>
+                      <label className="settings-form-label">主题色</label>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {SUBAGENT_COLORS.map(c => (
+                          <button key={c.id} onClick={() => setForm({ ...form, color: c.id })} title={c.label}
+                            style={{ width: 34, height: 34, borderRadius: 8, border: form.color === c.id ? `2px solid ${c.hex}` : '2px solid transparent', background: c.hex + '22', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}>
+                            <span style={{ width: 16, height: 16, borderRadius: 4, background: c.hex }} />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </>}
+
+                {/* ── Tab: Agent 描述 ── */}
+                {activeTab === 'prompt' && <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <label className="settings-form-label" style={{ margin: 0 }}>Agent 描述 <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <button className="btn btn-ghost" style={{ height: 22, fontSize: 10, padding: '0 6px' }} onClick={handleCopyPrompt}>
+                        {copied ? <><Check size={10} /> 已复制</> : <><Copy size={10} /> 复制</>}
+                      </button>
+                      <span style={{ fontSize: 10, color: 'var(--color-muted)', fontFamily: 'monospace' }}>{charCount} 字 · {lineCount} 行</span>
+                    </div>
+                  </div>
+                  <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden', minHeight: 400 }}>
+                    <MarkdownEditor value={form.system_prompt} onChange={v => setForm({ ...form, system_prompt: v })} />
+                  </div>
+                  <p style={{ fontSize: 10, color: 'var(--color-muted)', marginTop: 6 }}>定义 Subagent 的身份、能力和行为约束。左侧编辑 Markdown，右侧实时预览。</p>
+                </>}
+
+                {/* ── Tab: Skills & Tools ── */}
+                {activeTab === 'skills' && <>
+                  <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 4px' }}>可用 Skill</h4>
+                  <p style={{ fontSize: 10, color: 'var(--color-muted)', margin: '0 0 12px' }}>
+                    勾选后，此 Subagent 将可以使用对应的 Skill。不勾选则对该 Subagent 隐藏。
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 24 }}>
+                    {allSkills.length === 0 && <span style={{ fontSize: 12, color: 'var(--color-muted)' }}>加载中...</span>}
+                    {allSkills.map((s: any) => (
+                      <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 12, background: enabledSkills.includes(s.id) ? colorDisplay + '0d' : 'transparent' }}
+                        onClick={() => toggleSkill(s.id)}>
+                        <input type="checkbox" checked={enabledSkills.includes(s.id)} onChange={() => {}} style={{ accentColor: colorDisplay }} />
+                        <span style={{ fontWeight: 500 }}>{s.name}</span>
+                        <span style={{ color: 'var(--color-muted)', fontSize: 11 }}>({s.id})</span>
+                        <span style={{ color: 'var(--color-muted)', fontSize: 10, marginLeft: 'auto' }}>{s.description?.slice(0, 40)}</span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 4px' }}>可用 Tool</h4>
+                  <p style={{ fontSize: 10, color: 'var(--color-muted)', margin: '0 0 12px' }}>
+                    勾选后，此 Subagent 将可以使用对应的工具。不勾选则对该 Subagent 隐藏。
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {allTools.length === 0 && <span style={{ fontSize: 12, color: 'var(--color-muted)' }}>加载中...</span>}
+                    {allTools.map((t: any) => (
+                      <label key={t.name || t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 12, background: enabledTools.includes(t.name || t.id) ? colorDisplay + '0d' : 'transparent' }}
+                        onClick={() => toggleTool(t.name || t.id)}>
+                        <input type="checkbox" checked={enabledTools.includes(t.name || t.id)} onChange={() => {}} style={{ accentColor: colorDisplay }} />
+                        <span style={{ fontWeight: 500, fontFamily: 'monospace', fontSize: 11 }}>{t.name || t.id}</span>
+                        <span style={{ color: 'var(--color-muted)', fontSize: 10, marginLeft: 'auto' }}>{t.description?.slice(0, 50)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>}
+
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && selected && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowDeleteConfirm(false)}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 12, padding: 24, width: 380, boxShadow: '0 8px 30px rgba(0,0,0,0.15)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--color-danger-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>⚠️</span>
+              <div><div style={{ fontSize: 14, fontWeight: 600 }}>确认删除</div><div style={{ fontSize: 12, color: 'var(--color-muted)' }}>此操作不可撤销</div></div>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--color-muted)', margin: '0 0 16px', lineHeight: 1.5 }}>确定要删除 Subagent <strong>{selected.name}</strong>（{selected.id}）吗？已绑定此 Subagent 的通知渠道将恢复为默认 AI 行为。</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" style={{ height: 32, fontSize: 12 }} onClick={() => setShowDeleteConfirm(false)}>取消</button>
+              <button className="btn btn-primary" style={{ height: 32, fontSize: 12, background: 'var(--color-danger)', borderColor: 'var(--color-danger)' }} onClick={handleDelete}>确认删除</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

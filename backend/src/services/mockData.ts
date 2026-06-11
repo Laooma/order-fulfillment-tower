@@ -131,7 +131,7 @@ const analysisTitles = [
   '库存周转率诊断', '运输成本结构分析', '质量问题根因分析',
 ]
 
-const analysisAgents = ['系统Agent', '运营Agent', '仓储Agent', '风控Agent', '产品型销售订单确认收入智能体', '工程项目订单履约专家', '物料预缺与齐套分析专家', 'FAT计划助手']
+const analysisAgents = ['系统Agent', '运营Agent', '仓储Agent', '风控Agent', '产品型销售订单确认收入Skill', '工程项目订单履约专家', '物料预缺与齐套分析专家', 'FAT计划助手']
 const initiators = ['王经理', '李主管', '张总监', '财务总监', '客服经理', '仓储部经理', 'Hi·金星米', '系统']
 const analysisStatuses = ['已完成', '处理中', '待处理', '审批中', '已驳回']
 

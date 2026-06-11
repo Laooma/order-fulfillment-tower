@@ -45,7 +45,7 @@ export const scopeFieldMeta: Record<string, Array<{ field: string; label: string
   ],
   analysis_tasks: [
     { field: 'title', label: '标题', type: 'string' },
-    { field: 'agent', label: '智能体', type: 'string' },
+    { field: 'agent', label: 'Skill', type: 'string' },
     { field: 'initiator', label: '发起人', type: 'string' },
     { field: 'status', label: '状态', type: 'string', options: ['analyzing', 'completed'] },
     { field: 'created_at', label: '创建时间', type: 'date' },

@@ -79,7 +79,7 @@ export default function TaskAgentPage() {
       <div className="agent-status-card">
         <div className="agent-status-icon">A</div>
         <div className="agent-status-body">
-          <div className="agent-status-title">产品型销售订单确认收入智能体</div>
+          <div className="agent-status-title">产品型销售订单确认收入Skill</div>
           <div className="agent-status-sub">已执行 4 个步骤 · 耗时 2 分 18 秒 · 最后更新 10:24:36</div>
         </div>
         <span className="agent-status-badge">执行完成</span>

@@ -1327,7 +1327,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
               <button className="input-skill-bar" onClick={() => setShowAgentPopup(!showAgentPopup)}>
                 <span className={cn('skill-dot', activeAgent?.color)} />
                 <span className="input-skill-name">
-                  {autoAssign ? '自动分配' : activeAgent?.name || '选择智能体'}
+                  {autoAssign ? '自动分配' : activeAgent?.name || '选择Skill'}
                 </span>
                 <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor" className="input-skill-chevron">
                   <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
@@ -1428,7 +1428,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
             />
             <div className="chat-toolbar">
               <div className="chat-toolbar-left">
-                <button className="toolbar-action-btn" title="切换智能体" onClick={() => !lockAgent && setShowAgentPopup(!showAgentPopup)}>
+                <button className="toolbar-action-btn" title="切换Skill" onClick={() => !lockAgent && setShowAgentPopup(!showAgentPopup)}>
                   @
                 </button>
                 <button
@@ -1587,7 +1587,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
               </div>
               <div className="agent-popup-inner">
                 <div className="agent-popup-header">
-                  <div className="agent-popup-title">选择智能体</div>
+                  <div className="agent-popup-title">选择Skill</div>
                   <div className="toggle-wrap">
                     <span className="toggle-label">自动分配</span>
                     <label className="toggle">
@@ -1613,7 +1613,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                       <input
                         className="agent-search-input"
                         type="text"
-                        placeholder="检索智能体..."
+                        placeholder="检索Skill..."
                         value={agentSearch}
                         onChange={(e) => setAgentSearch(e.target.value)}
                         autoFocus
@@ -1652,7 +1652,7 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                       {skillsLoading ? (
                         <div style={{ padding: 12, color: 'var(--color-muted)', fontSize: 12, textAlign: 'center' }}>加载中...</div>
                       ) : skills.length === 0 ? (
-                        <div style={{ padding: 12, color: 'var(--color-muted)', fontSize: 12, textAlign: 'center' }}>暂无智能体</div>
+                        <div style={{ padding: 12, color: 'var(--color-muted)', fontSize: 12, textAlign: 'center' }}>暂无Skill</div>
                       ) : (
                         skills.filter((s) => {
                           if (!agentSearch) return true
@@ -1690,14 +1690,14 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
                         const q = agentSearch.toLowerCase()
                         return s.name.toLowerCase().includes(q) || (s.description && s.description.toLowerCase().includes(q))
                       }).length === 0 && (
-                        <div style={{ padding: 12, color: 'var(--color-muted)', fontSize: 12, textAlign: 'center' }}>无匹配的智能体</div>
+                        <div style={{ padding: 12, color: 'var(--color-muted)', fontSize: 12, textAlign: 'center' }}>无匹配的Skill</div>
                       )}
                     </div>
                   </>
                 )}
                 {autoAssign && (
                   <div className="agent-auto-desc">
-                    由系统自动识别对话意图并分配最合适的智能体处理
+                    由系统自动识别对话意图并分配最合适的Skill处理
                   </div>
                 )}
               </div>

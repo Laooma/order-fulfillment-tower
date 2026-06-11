@@ -12,6 +12,7 @@ router.get('/', (req, res) => {
     salesperson,
     shipMethod,
     brand,
+    contractNumber,
     receiptStatus,
     deliveryStatus,
     isException,
@@ -27,6 +28,9 @@ router.get('/', (req, res) => {
   }
   if (brand && typeof brand === 'string') {
     data = data.filter((o) => o.brand.includes(brand))
+  }
+  if (contractNumber && typeof contractNumber === 'string') {
+    data = data.filter((o) => (o.contractNumber || o.contract_number || '').includes(contractNumber))
   }
   if (shipMethod && typeof shipMethod === 'string') {
     data = data.filter((o) => o.shipMethod === shipMethod)

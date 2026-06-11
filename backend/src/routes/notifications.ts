@@ -3,6 +3,7 @@ import {
   listNotificationChannels, getNotificationChannel, createNotificationChannel, updateNotificationChannel, deleteNotificationChannel,
   listNotificationTemplates, getNotificationTemplate, createNotificationTemplate, updateNotificationTemplate, deleteNotificationTemplate,
   insertNotificationLog, listNotificationLogs, getLastLogByChannel,
+  listSubagents, getSubagent, createSubagent, updateSubagent, deleteSubagent,
 } from '../services/database'
 
 export const notificationsRouter = Router()
@@ -35,13 +36,13 @@ notificationsRouter.get('/notification-channels/:id', (req, res) => {
 
 notificationsRouter.post('/notification-channels', (req, res) => {
   try {
-    const { id, name, type, config } = req.body
+    const { id, name, type, config, subagentId } = req.body
     if (!id || !name || !type) {
       res.status(400).json({ error: 'id, name, and type are required' })
       return
     }
-    if (!['email', 'wecom', 'feishu', 'feishu_app'].includes(type)) {
-      res.status(400).json({ error: 'type must be email, wecom, feishu, or feishu_app' })
+    if (!['email', 'wecom', 'feishu', 'feishu_app', 'dingtalk', 'dingtalk_app'].includes(type)) {
+      res.status(400).json({ error: 'type must be email, wecom, feishu, feishu_app, dingtalk, or dingtalk_app' })
       return
     }
     const result = createNotificationChannel({
@@ -49,6 +50,7 @@ notificationsRouter.post('/notification-channels', (req, res) => {
       name,
       type,
       config_json: config ? JSON.stringify(config) : '{}',
+      subagent_id: subagentId || null,
     })
     res.json(result)
   } catch (err) {
@@ -59,11 +61,12 @@ notificationsRouter.post('/notification-channels', (req, res) => {
 
 notificationsRouter.put('/notification-channels/:id', (req, res) => {
   try {
-    const { name, config, enabled } = req.body
+    const { name, config, enabled, subagentId } = req.body
     const data: any = {}
     if (name !== undefined) data.name = name
     if (config !== undefined) data.config_json = JSON.stringify(config)
     if (enabled !== undefined) data.enabled = enabled ? 1 : 0
+    if (subagentId !== undefined) data.subagent_id = subagentId || null
     const result = updateNotificationChannel(req.params.id, data)
     if (!result.success) {
       res.status(404).json({ error: 'Channel not found or no changes' })
@@ -150,6 +153,12 @@ notificationsRouter.post('/notifications/test/:id', async (req, res) => {
     }
     if (channel.type === 'feishu_app') {
       testTo = config.receive_id || ''
+    }
+    if (channel.type === 'dingtalk') {
+      testTo = ''
+    }
+    if (channel.type === 'dingtalk_app') {
+      testTo = config.userid_list || ''
     }
 
     const result = await sendNotification(channel.type, config, testTo, testSubject, testMessage)
@@ -268,6 +277,64 @@ notificationsRouter.get('/notification-channels/:id/health', (req, res) => {
   }
 })
 
+// ── Subagents CRUD ──
+
+notificationsRouter.get('/subagents', (_req, res) => {
+  try {
+    const subagents = listSubagents()
+    res.json({ data: subagents })
+  } catch (err) {
+    console.error('[Subagents] List error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+notificationsRouter.get('/subagents/:id', (req, res) => {
+  try {
+    const subagent = getSubagent(req.params.id)
+    if (!subagent) { res.status(404).json({ error: 'Subagent not found' }); return }
+    res.json(subagent)
+  } catch (err) {
+    console.error('[Subagents] Get error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+notificationsRouter.post('/subagents', (req, res) => {
+  try {
+    const { id, name, description, system_prompt, icon, color, enabled_skills, enabled_tools } = req.body
+    if (!id || !name) { res.status(400).json({ error: 'id and name are required' }); return }
+    const result = createSubagent({ id, name, description, system_prompt, icon, color, enabled_skills, enabled_tools })
+    res.status(201).json(result)
+  } catch (err) {
+    console.error('[Subagents] Create error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+notificationsRouter.put('/subagents/:id', (req, res) => {
+  try {
+    const { name, description, system_prompt, icon, color, enabled_skills, enabled_tools } = req.body
+    const result = updateSubagent(req.params.id, { name, description, system_prompt, icon, color, enabled_skills, enabled_tools })
+    if (!result) { res.status(404).json({ error: 'Subagent not found' }); return }
+    res.json(result)
+  } catch (err) {
+    console.error('[Subagents] Update error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
+notificationsRouter.delete('/subagents/:id', (req, res) => {
+  try {
+    const result = deleteSubagent(req.params.id)
+    if (!result.success) { res.status(404).json({ error: 'Subagent not found' }); return }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('[Subagents] Delete error:', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
 // ── Seed templates ──
 
 function seedTemplates() {
@@ -322,6 +389,10 @@ async function sendNotification(type: string, config: Record<string, any>, to: s
       return sendFeishuBot(config, subject, message)
     case 'feishu_app':
       return sendFeishuApp(config, to, subject, message)
+    case 'dingtalk':
+      return sendDingTalkBot(config, subject, message)
+    case 'dingtalk_app':
+      return sendDingTalkApp(config, to, subject, message)
     default:
       return { success: false, error: `Unknown channel type: ${type}` }
   }
@@ -468,6 +539,106 @@ async function sendFeishuApp(config: Record<string, any>, to: string, _subject: 
   } catch (err) {
     const msg = (err as Error).message
     console.error('[Notifications] Feishu App error:', msg)
+    return { success: false, error: msg }
+  }
+}
+
+async function sendDingTalkBot(config: Record<string, any>, subject: string, message: string): Promise<{ success: boolean; error?: string; detail?: string }> {
+  try {
+    const webhookUrl = config.webhook_url
+    if (!webhookUrl) {
+      return { success: false, error: 'Missing webhook_url in config' }
+    }
+
+    let url = webhookUrl
+    const secret = config.secret
+    if (secret) {
+      // Sign with HmacSHA256 + Base64, append timestamp and sign to URL
+      const timestamp = Date.now()
+      const signStr = `${timestamp}\n${secret}`
+      const crypto = require('crypto')
+      const sign = crypto.createHmac('sha256', secret).update(signStr).digest('base64')
+      const sep = url.includes('?') ? '&' : '?'
+      url = `${url}${sep}timestamp=${timestamp}&sign=${encodeURIComponent(sign)}`
+    }
+
+    const content = subject ? `${subject}\n\n${message}` : message
+    const body = JSON.stringify({
+      msgtype: 'text',
+      text: { content },
+    })
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+
+    const result = await response.json() as any
+    if (result.errcode === 0) {
+      return { success: true, detail: 'DingTalk message sent' }
+    }
+    return { success: false, error: `DingTalk error: ${result.errmsg || JSON.stringify(result)}` }
+  } catch (err) {
+    const msg = (err as Error).message
+    console.error('[Notifications] DingTalk error:', msg)
+    return { success: false, error: msg }
+  }
+}
+
+async function sendDingTalkApp(config: Record<string, any>, to: string, subject: string, message: string): Promise<{ success: boolean; error?: string; detail?: string }> {
+  try {
+    const appKey = config.app_key || config.client_id
+    const appSecret = config.app_secret || config.client_secret
+    const agentId = config.agent_id
+    const useridList = to || config.userid_list || ''
+
+    if (!appKey || !appSecret) {
+      return { success: false, error: 'Missing app_key (client_id) or app_secret (client_secret) in config' }
+    }
+    if (!agentId) {
+      return { success: false, error: 'Missing agent_id in config' }
+    }
+    if (!useridList) {
+      return { success: false, error: 'Missing userid_list (recipient)' }
+    }
+
+    // Step 1: Get access_token
+    const tokenRes = await fetch(`https://oapi.dingtalk.com/gettoken?appkey=${encodeURIComponent(appKey)}&appsecret=${encodeURIComponent(appSecret)}`)
+    const tokenData = await tokenRes.json() as any
+    if (tokenData.errcode !== 0) {
+      return { success: false, error: `DingTalk auth error: ${tokenData.errmsg || JSON.stringify(tokenData)}` }
+    }
+    const accessToken = tokenData.access_token
+
+    // Step 2: Send work notification
+    const msg: Record<string, any> = subject
+      ? {
+          msgtype: 'markdown',
+          markdown: { title: subject, text: message },
+        }
+      : {
+          msgtype: 'text',
+          text: { content: message },
+        }
+
+    const sendRes = await fetch(`https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?access_token=${encodeURIComponent(accessToken)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_id: Number(agentId),
+        userid_list: useridList,
+        msg,
+      }),
+    })
+    const sendData = await sendRes.json() as any
+    if (sendData.errcode === 0) {
+      return { success: true, detail: `DingTalk work notification sent, task_id: ${sendData.task_id || 'unknown'}` }
+    }
+    return { success: false, error: `DingTalk error: ${sendData.errmsg || JSON.stringify(sendData)}` }
+  } catch (err) {
+    const msg = (err as Error).message
+    console.error('[Notifications] DingTalk App error:', msg)
     return { success: false, error: msg }
   }
 }

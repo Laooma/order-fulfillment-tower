@@ -289,7 +289,7 @@ export const api = {
       get: (id: string) => request<{ data: any }>(`/notification-channels/${id}`),
       create: (data: { id: string; name: string; type: string; config?: Record<string, any> }) =>
         request<{ success: boolean }>('/notification-channels', { method: 'POST', body: JSON.stringify(data) }),
-      update: (id: string, data: { name?: string; config?: Record<string, any>; enabled?: boolean }) =>
+      update: (id: string, data: { name?: string; config?: Record<string, any>; enabled?: boolean; subagentId?: string | null }) =>
         request<{ success: boolean }>(`/notification-channels/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
       delete: (id: string) =>
         request<{ success: boolean }>(`/notification-channels/${id}`, { method: 'DELETE' }),
@@ -314,5 +314,15 @@ export const api = {
       list: (params?: { channelId?: string; success?: number; page?: number; pageSize?: number }) =>
         request<{ data: any[]; total: number; page: number; pageSize: number }>(`/notification-logs?${new URLSearchParams(Object.fromEntries(Object.entries(params || {}).filter(([_,v]) => v !== undefined).map(([k,v]) => [k, String(v)]))).toString()}`),
     },
+  },
+  subagents: {
+    list: () => request<{ data: any[] }>('/subagents'),
+    get: (id: string) => request<any>(`/subagents/${id}`),
+    create: (data: { id: string; name: string; description?: string; system_prompt?: string; icon?: string; color?: string; enabled_skills?: string; enabled_tools?: string }) =>
+      request<any>('/subagents', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: { name?: string; description?: string; system_prompt?: string; icon?: string; color?: string; enabled_skills?: string; enabled_tools?: string }) =>
+      request<any>(`/subagents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<{ success: boolean }>(`/subagents/${id}`, { method: 'DELETE' }),
   },
 }

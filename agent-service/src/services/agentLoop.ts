@@ -240,13 +240,13 @@ const SEND_NOTIFICATION_TOOL = {
   type: 'function' as const,
   function: {
     name: 'send_notification',
-    description: 'Send a notification message through a configured notification channel (email, WeCom bot, or Feishu bot). Use this to notify users about important events like analysis completion, overdue tasks, or status changes.',
+    description: 'Send a notification message through a configured notification channel (email, WeCom bot, Feishu bot, DingTalk bot, or DingTalk enterprise app). Use this to notify users about important events like analysis completion, overdue tasks, or status changes.',
     parameters: {
       type: 'object',
       properties: {
         channelId: { type: 'string', description: 'The ID of the notification channel to use. Call list_notification_channels first to see available channels.' },
-        to: { type: 'string', description: 'Recipient address. For email: comma-separated email addresses. For WeCom/Feishu bots: can be empty (webhook determines the destination).' },
-        subject: { type: 'string', description: 'Message subject (used for email, ignored for bots)' },
+        to: { type: 'string', description: 'Recipient address. For email: comma-separated email addresses. For WeCom/Feishu/DingTalk bots: can be empty (webhook determines the destination). For DingTalk enterprise app: comma-separated user IDs (e.g. user1,user2).' },
+        subject: { type: 'string', description: 'Message subject (used for email and DingTalk enterprise app, ignored for other bots)' },
         message: { type: 'string', description: 'Message body content. Plain text. For WeCom bots, markdown format is supported.' },
       },
       required: ['channelId', 'message'],
@@ -258,7 +258,7 @@ const LIST_NOTIFICATION_CHANNELS_TOOL = {
   type: 'function' as const,
   function: {
     name: 'list_notification_channels',
-    description: 'List all configured notification channels (email, WeCom bot, Feishu bot). Use this to discover available channels before sending a notification.',
+    description: 'List all configured notification channels (email, WeCom bot, Feishu bot, DingTalk bot, DingTalk enterprise app). Use this to discover available channels before sending a notification.',
     parameters: {
       type: 'object',
       properties: {},
@@ -2227,7 +2227,7 @@ async function recognizeIntent(
       messages: [
         {
           role: 'system',
-          content: `你是一个意图分类器。根据用户的消息，从以下智能体中选择最合适的一个来处理该请求。只回复智能体的 id（如 "product-revenue"），不要回复其他内容。\n\n可用的智能体：\n${skillList}`,
+          content: `你是一个意图分类器。根据用户的消息，从以下Skill中选择最合适的一个来处理该请求。只回复Skill的 id（如 "product-revenue"），不要回复其他内容。\n\n可用的Skill：\n${skillList}`,
         },
         { role: 'user', content: message },
       ],

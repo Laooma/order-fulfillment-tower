@@ -10,6 +10,7 @@ import mcpRouter from './routes/mcp'
 import pluginsRouter from './routes/plugins'
 import modelsRouter from './routes/models'
 import { createCronTasksRouter, createApiRouter } from './routes/cronTasks'
+import dingtalkAgentRouter from './routes/dingtalkAgent'
 import { createToolsRouter } from './routes/tools'
 import { createTasksRouter } from './routes/tasks'
 import { CronScheduler } from './services/cronScheduler'
@@ -82,6 +83,7 @@ app.use('/tools', createToolsRouter(mcpPool))
 app.use('/tasks', createTasksRouter(sessionStore))
 app.use('/cron-tasks', createCronTasksRouter(scheduler))
 app.use('/api', createApiRouter())
+app.use('/api', dingtalkAgentRouter)
 
 // WebSocket agent handler
 wss.on('connection', (ws) => {
@@ -97,7 +99,7 @@ wss.on('connection', (ws) => {
       if (msg.type === 'chat' && msg.sessionId && (msg.skillId || msg.autoAssign || isTodoGen)) {
         await handleAgentMessage(ws, msg, mcpPool)
       } else if (msg.type === 'chat') {
-        ws.send(JSON.stringify({ type: 'error', content: '请选择一个智能体或开启自动分配', sessionId: msg.sessionId }))
+        ws.send(JSON.stringify({ type: 'error', content: '请选择一个Skill或开启自动分配', sessionId: msg.sessionId }))
       } else if (msg.type === 'abort') {
         abortSession(msg.sessionId || '')
         ws.send(JSON.stringify({ type: 'stopped', sessionId: msg.sessionId }))
