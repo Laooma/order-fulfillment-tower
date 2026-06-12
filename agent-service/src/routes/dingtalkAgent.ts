@@ -13,19 +13,34 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
 
 // ── Session store (userId → messages[]) with skill tracking ──
 
+const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes — sessions auto-expire after inactivity
+
 interface DingTalkSession {
   messages: Array<{ role: string; content: string; toolCalls?: any; tool_call_id?: string }>
   skillId: string | null
   skillName: string | null
+  lastActiveAt: number
 }
 
 const sessions = new Map<string, DingTalkSession>()
 
 function getOrCreateSession(userId: string): DingTalkSession {
+  const existing = sessions.get(userId)
+  // Auto-expire stale sessions — each user gets a fresh session after inactivity
+  if (existing && Date.now() - existing.lastActiveAt > SESSION_TTL_MS) {
+    console.log(`[DingTalkAgent] Session expired for ${userId} (inactive ${Math.round((Date.now() - existing.lastActiveAt) / 60000)}min), creating new one`)
+    sessions.delete(userId)
+  }
   if (!sessions.has(userId)) {
-    sessions.set(userId, { messages: [], skillId: null, skillName: null })
+    sessions.set(userId, { messages: [], skillId: null, skillName: null, lastActiveAt: Date.now() })
   }
   return sessions.get(userId)!
+}
+
+function touchSession(userId: string) {
+  const s = sessions.get(userId)
+  if (s) s.lastActiveAt = Date.now()
+}
 }
 
 // ── Intent recognition (same algorithm as agentLoop.ts) ──
@@ -679,6 +694,7 @@ router.post('/dingtalk-agent', async (req, res) => {
       for (const key of keys.slice(0, 100)) sessions.delete(key)
     }
 
+    touchSession(uid)
     console.log(`[DingTalkAgent] Response: ${finalContent.slice(0, 100)}`)
     res.json({ content: finalContent || '抱歉，我没有理解您的问题，请换个方式描述。' })
   } catch (err: any) {
