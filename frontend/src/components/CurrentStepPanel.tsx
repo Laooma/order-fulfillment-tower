@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Bot, Hand, Scale, CheckCircle, Play, Send, AlertTriangle, Clock, DollarSign, Shield } from 'lucide-react'
+import { Bot, Hand, Scale, CheckCircle, Play, Send, AlertTriangle, Clock, DollarSign, Shield, Loader2 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { api } from '../lib/api'
+import { useChatStore } from '../stores/chatStore'
 import type { ExecutionTask, ExecutionStep, DecisionOption } from '../types'
 
 interface CurrentStepPanelProps {
@@ -30,6 +31,10 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [resultMessage, setResultMessage] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+
+  const sendMessage = useChatStore((s) => s.sendMessage)
 
   const isDone = step.status === 'done'
   const canOperate = currentUserName && (
@@ -37,7 +42,7 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
     currentUserName === task.supervisor
   )
 
-  // Load decision options
+  // Load decision options and detect submitted state
   useEffect(() => {
     if (step.step_type === 'decision' && step.id) {
       api.executionTasks.options(step.id).then((res) => {
@@ -45,6 +50,14 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
         const preselected = (res.data || []).find((o: DecisionOption) => o.is_selected)
         if (preselected) setSelectedOption(preselected.id)
       }).catch(() => {})
+    }
+    // Check if already submitted (e.g. page refresh after submit)
+    const rd = step.resultData as any
+    if (rd?.submitted) {
+      setSubmitted(true)
+      setSelectedOption(rd.decisionOptionId || '')
+      setComment(rd.comment || '')
+      setNotes(rd.notes || '')
     }
   }, [step.id, step.step_type])
 
@@ -102,10 +115,13 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
     setResultMessage('')
     try {
       const chosen = options.find((o) => o.id === selectedOption)
-      await api.executionTasks.decide(step.id, {
+
+      // Phase 1: Submit decision WITHOUT marking complete
+      const res = await api.executionTasks.decide(step.id, {
         optionId: selectedOption,
         comment: comment || chosen?.title || '',
         handler: currentUserName,
+        complete: false,
         resultData: {
           decisionOptionId: selectedOption,
           decisionTitle: chosen?.title || '',
@@ -113,8 +129,29 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
           notes: notes || undefined,
         },
       })
-      setResultMessage('决策已提交 ✅')
-      setTimeout(() => onStepUpdated?.(), 600)
+
+      if (res?.submitted) {
+        setSubmitted(true)
+        setResultMessage('决策已提交，正在校验任务完成状态...')
+        // Refresh task data so timeline shows submitted badge
+        onStepUpdated?.()
+
+        // Phase 2: Trigger verification via AI chat
+        setVerifying(true)
+        const decisionLabel = chosen?.title || selectedOption
+        if (sendMessage) {
+          sendMessage(
+            `请使用 mark_task_complete 工具验证执行任务 ${task.id}（${task.title}）。` +
+            `当前步骤决策结果：${decisionLabel}。` +
+            `补充说明：${comment || '无'}。` +
+            `请检查该决策是否正确执行，物料库存是否满足条件，验证后标记任务完成。`
+          )
+        }
+      } else {
+        // Legacy: complete=true returned (step already marked done)
+        setResultMessage('决策已提交 ✅')
+        setTimeout(() => onStepUpdated?.(), 600)
+      }
     } catch (err: any) {
       setResultMessage(err?.message || '操作失败，请重试')
     } finally {
@@ -242,7 +279,35 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
         {/* ── Decision step (redesigned) ── */}
         {!isDone && step.step_type === 'decision' && (
           <div className="flex flex-col gap-4">
-            {options.length > 0 ? (
+            {/* ── Post-submission: verifying state ── */}
+            {submitted ? (
+              <div className="flex flex-col items-center gap-3 py-4">
+                {verifying ? (
+                  <>
+                    <Loader2 size={36} className="text-accent animate-spin" />
+                    <span className="text-sm font-semibold text-fg">校验中...</span>
+                    <span className="text-xs text-muted text-center leading-relaxed">
+                      已提交决策「{options.find(o => o.id === selectedOption)?.title || selectedOption}」，<br />
+                      AI 正在检查实时库存数据验证任务是否真正完成。
+                    </span>
+                    <div className="text-[10px] text-muted mt-1">
+                      校验结果将在右侧 AI 助手面板中显示
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Send size={36} className="text-success" />
+                    <span className="text-sm font-semibold text-success">决策已提交</span>
+                    <span className="text-xs text-muted text-center leading-relaxed">
+                      已选择「{options.find(o => o.id === selectedOption)?.title || selectedOption}」
+                    </span>
+                    <span className="text-[10px] text-muted">
+                      等待 AI 校验完成标记...
+                    </span>
+                  </>
+                )}
+              </div>
+            ) : options.length > 0 ? (
               <>
                 <div>
                   <div className="text-xs font-semibold text-fg mb-2">请选择决策方案：</div>
@@ -254,7 +319,7 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
                           'decision-option-card',
                           selectedOption === opt.id && 'selected'
                         )}
-                        onClick={() => !loading && canOperate && setSelectedOption(opt.id)}
+                        onClick={() => !loading && canOperate && !submitted && setSelectedOption(opt.id)}
                       >
                         <div className="decision-option-radio">
                           {selectedOption === opt.id ? '✓' : ''}

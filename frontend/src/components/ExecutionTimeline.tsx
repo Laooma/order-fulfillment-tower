@@ -184,11 +184,13 @@ export default function ExecutionTimeline({ steps, currentStepId, onStepClick }:
             }
 
             // ── Current step (highlighted) ──
+            const isSubmitted = step.step_type === 'decision' && (step.resultData as any)?.submitted
             return (
               <div
                 key={step.id}
                 className={cn(
-                  'timeline-item current',
+                  'timeline-item',
+                  isSubmitted ? 'submitted' : 'current',
                   step.status === 'overdue' && 'danger'
                 )}
                 onClick={() => onStepClick?.(step)}
@@ -198,13 +200,16 @@ export default function ExecutionTimeline({ steps, currentStepId, onStepClick }:
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       'badge-pill text-[10px] px-1.5 py-0.5',
-                      step.status === 'overdue' ? 'danger' : 'progress'
+                      step.status === 'overdue' ? 'danger' : isSubmitted ? 'submitted' : 'progress'
                     )}>
                       {typeIcons[step.step_type]}
                       <span className="ml-1">{typeLabels[step.step_type]}</span>
                     </span>
                     <span className="timeline-title">{step.title || `步骤 ${step.step_order}`}</span>
-                    <span className="timeline-current-badge">当前</span>
+                    <span className={cn(
+                      'timeline-current-badge',
+                      isSubmitted && 'submitted'
+                    )}>{isSubmitted ? '已提交' : '当前'}</span>
                   </div>
                   <div className="timeline-time">
                     {step.started_at && `开始：${step.started_at}`}
@@ -216,6 +221,9 @@ export default function ExecutionTimeline({ steps, currentStepId, onStepClick }:
                   )}
                   {step.assignee && (
                     <div className="text-[11px] text-muted mt-0.5">待办人：{step.assignee}</div>
+                  )}
+                  {isSubmitted && (
+                    <div className="text-[11px] text-warning mt-0.5">⏳ 等待校验...</div>
                   )}
                 </div>
               </div>

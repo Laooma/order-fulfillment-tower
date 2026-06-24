@@ -273,11 +273,29 @@ router.post('/steps/:id/options', (req, res) => {
 })
 
 // PUT /api/execution-steps/:stepId/decide
+// complete=false (default): save decision only, don't mark step done — used for submission then verify flow
+// complete=true: legacy behaviour — mark step done immediately + auto-advance (called by mark_task_complete tool)
 router.put('/steps/:stepId/decide', (req, res) => {
   try {
-    const { optionId, comment, handler, resultData } = req.body
+    const { optionId, comment, handler, resultData, complete } = req.body
     selectDecisionOption(req.params.stepId, optionId)
     const now = new Date().toLocaleString('zh-CN')
+
+    if (!complete) {
+      // ── Submit mode: save decision, keep step status unchanged ──
+      const step = updateExecutionStep(req.params.stepId, {
+        handler: handler || '',
+        resultData: { decisionOptionId: optionId, comment, submitted: true, ...(resultData || {}) },
+      })
+      if (!step) {
+        res.status(404).json({ error: 'Step not found' })
+        return
+      }
+      res.json({ success: true, submitted: true, data: step })
+      return
+    }
+
+    // ── Complete mode: mark step done + auto-advance ──
     const step = updateExecutionStep(req.params.stepId, {
       status: 'done',
       completedAt: now,

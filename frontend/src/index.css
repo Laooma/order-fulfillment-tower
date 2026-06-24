@@ -2878,6 +2878,29 @@ body {
   margin-top: 3px;
 }
 
+/* Submitted step — decision submitted, awaiting verification */
+.timeline-item.submitted {
+  border-left: 4px solid var(--color-warning);
+  padding-left: 8px;
+  background: oklch(97% 0.05 85);
+  margin-left: 0;
+}
+.timeline-item.submitted .timeline-dot {
+  width: 12px; height: 12px;
+  background: var(--color-warning);
+  box-shadow: 0 0 0 4px oklch(60% 0.18 85 / 0.18);
+  margin-top: 3px;
+}
+.timeline-item.submitted .timeline-title { color: var(--color-fg); }
+.timeline-current-badge.submitted {
+  background: var(--color-warning);
+  color: #fff;
+}
+.badge-pill.submitted {
+  background: oklch(95% 0.05 85);
+  color: oklch(45% 0.15 75);
+}
+
 /* Completed step — compact collapsed */
 .timeline-item.completed {
   padding: 6px 12px;
