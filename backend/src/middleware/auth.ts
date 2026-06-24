@@ -58,6 +58,15 @@ export const scopeFieldMeta: Record<string, Array<{ field: string; label: string
     { field: 'due_date', label: '截止日期', type: 'date' },
     { field: 'task_type', label: '任务类型', type: 'string', options: ['agent', 'decision', 'manual'] },
   ],
+  execution_tasks: [
+    { field: 'assignee', label: '负责人', type: 'string' },
+    { field: 'status', label: '状态', type: 'string', options: ['pending', 'progress', 'overdue', 'done'] },
+    { field: 'category', label: '分类', type: 'string', options: ['ship', 'inbound', 'contract', 'exception'] },
+    { field: 'priority', label: '优先级', type: 'string', options: ['high', 'medium', 'low'] },
+    { field: 'due_date', label: '截止日期', type: 'date' },
+    { field: 'contract_number', label: '合同编号', type: 'string' },
+    { field: 'created_at', label: '创建时间', type: 'date' },
+  ],
 }
 
 // Map resource key to actual DB table/column aliases used in queries
@@ -65,6 +74,7 @@ const scopeTableMap: Record<string, Record<string, string>> = {
   orders: { region: 'ao.region', sales: 'ao.sales', customer: 'ao.customer', status: 'ao.status', amount: 'ao.amount', order_date: 'ao.order_date' },
   analysis_tasks: { title: 'at.title', agent: 'at.agent', initiator: 'at.initiator', status: 'at.status', created_at: 'at.created_at' },
   todos: { category: 'at2.category', priority: 'at2.priority', assignee: 'at2.assignee', status: 'at2.status', due_date: 'at2.due_date', task_type: 'at2.task_type' },
+  execution_tasks: { assignee: 'et.assignee', status: 'et.status', category: 'et.category', priority: 'et.priority', created_at: 'et.created_at', due_date: 'et.due_date', contract_number: 'et.contract_number', created_by: 'et.created_by' },
 }
 
 // Generate JWT token for a user

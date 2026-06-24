@@ -1289,45 +1289,75 @@ export function listExecutionTasks(params: {
   search?: string
   page?: number
   pageSize?: number
+  sortCol?: string
+  sortDir?: string
+  scopeSql?: string
 } = {}) {
   const d = getDb()
   let where = 'WHERE 1=1'
   const values: any[] = []
 
   if (params.status && params.status !== 'all') {
-    where += ' AND status = ?'
-    values.push(params.status)
+    const statuses = params.status.split(',').filter(Boolean)
+    if (statuses.length === 1) {
+      where += ' AND et.status = ?'
+      values.push(statuses[0])
+    } else if (statuses.length > 1) {
+      where += ` AND et.status IN (${statuses.map(() => '?').join(',')})`
+      values.push(...statuses)
+    }
   }
   if (params.category && params.category !== 'all') {
-    where += ' AND category = ?'
+    where += ' AND et.category = ?'
     values.push(params.category)
   }
   if (params.assignee && params.assignee !== 'all') {
-    where += ' AND assignee = ?'
+    where += ' AND et.assignee = ?'
     values.push(params.assignee)
   }
   if (params.supervisor && params.supervisor !== 'all') {
-    where += ' AND supervisor = ?'
+    where += ' AND et.supervisor = ?'
     values.push(params.supervisor)
   }
   if (params.priority && params.priority !== 'all') {
-    where += ' AND priority = ?'
+    where += ' AND et.priority = ?'
     values.push(params.priority)
   }
   if (params.search) {
     const q = `%${params.search.toLowerCase()}%`
-    where += ' AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(assignee) LIKE ? OR LOWER(contract_number) LIKE ?)'
+    where += ' AND (LOWER(et.title) LIKE ? OR LOWER(et.description) LIKE ? OR LOWER(et.assignee) LIKE ? OR LOWER(et.contract_number) LIKE ?)'
     values.push(q, q, q, q)
   }
 
-  const total = (d.prepare(`SELECT COUNT(*) as c FROM execution_tasks ${where}`).get(...values) as any)?.c || 0
+  // Inject data scope SQL from RBAC
+  if (params.scopeSql) {
+    where += params.scopeSql
+  }
+
+  const total = (d.prepare(`SELECT COUNT(*) as c FROM execution_tasks et ${where}`).get(...values) as any)?.c || 0
   const page = Math.max(1, params.page || 1)
   const pageSize = Math.max(1, params.pageSize || 20)
   const offset = (page - 1) * pageSize
 
+  // Build ORDER BY — default by created_at DESC
+  let orderBy = 'ORDER BY et.created_at DESC'
+  if (params.sortCol) {
+    const allowedCols: Record<string, string> = {
+      id: 'et.id',
+      priority: "et.priority = 'high' DESC, et.priority",
+      dueDate: 'et.due_date',
+      status: 'et.status',
+      created_at: 'et.created_at',
+      assignee: 'et.assignee',
+    }
+    const col = allowedCols[params.sortCol] || 'et.created_at'
+    const dir = params.sortDir === 'asc' ? 'ASC' : 'DESC'
+    orderBy = `ORDER BY ${col} ${dir}`
+  }
+
   const tasks = d.prepare(`
-    SELECT * FROM execution_tasks ${where}
-    ORDER BY priority = 'high' DESC, status = 'overdue' DESC, due_date ASC
+    SELECT et.* FROM execution_tasks et ${where}
+    ${orderBy}
     LIMIT ? OFFSET ?
   `).all(...values, pageSize, offset) as any[]
 

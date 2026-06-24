@@ -15,6 +15,7 @@ import {
   getTaskHandovers,
   migrateTodosToExecutionTasks,
 } from '../services/database'
+import { requireOperation, applyDataScope, type CurrentUser } from '../middleware/auth'
 
 const router = Router()
 
@@ -54,8 +55,10 @@ function enrichTask(task: any) {
 }
 
 // GET /api/execution-tasks
-router.get('/', (req, res) => {
+router.get('/', requireOperation('view_todos'), (req, res) => {
   try {
+    const user = (req as any).currentUser as CurrentUser
+    const scope = applyDataScope(user, 'execution_tasks')
     const result = listExecutionTasks({
       status: req.query.status as string,
       category: req.query.category as string,
@@ -65,6 +68,9 @@ router.get('/', (req, res) => {
       search: req.query.search as string,
       page: req.query.page ? parseInt(req.query.page as string, 10) : undefined,
       pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined,
+      sortCol: req.query.sortCol as string,
+      sortDir: req.query.sortDir as string,
+      scopeSql: scope.sql,
     })
     res.json({ ...result, data: result.data.map(enrichTask) })
   } catch (err) {
@@ -74,7 +80,7 @@ router.get('/', (req, res) => {
 })
 
 // POST /api/execution-tasks
-router.post('/', (req, res) => {
+router.post('/', requireOperation('assign_todos'), (req, res) => {
   try {
     const task = createExecutionTask(req.body)
     res.json({ success: true, data: enrichTask(task) })
@@ -96,7 +102,7 @@ router.post('/migrate', (req, res) => {
 })
 
 // GET /api/execution-tasks/:id
-router.get('/:id', (req, res) => {
+router.get('/:id', requireOperation('view_todos'), (req, res) => {
   try {
     const task = getExecutionTask(req.params.id)
     if (!task) {
@@ -111,7 +117,7 @@ router.get('/:id', (req, res) => {
 })
 
 // PUT /api/execution-tasks/:id
-router.put('/:id', (req, res) => {
+router.put('/:id', requireOperation('update_todos'), (req, res) => {
   try {
     const task = updateExecutionTask(req.params.id, req.body)
     if (!task) {
@@ -126,7 +132,7 @@ router.put('/:id', (req, res) => {
 })
 
 // DELETE /api/execution-tasks/:id
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireOperation('delete_todos'), (req, res) => {
   try {
     const result = deleteExecutionTask(req.params.id)
     res.json(result)

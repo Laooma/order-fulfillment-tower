@@ -1,12 +1,12 @@
 import { Router } from 'express'
 import { mockAnalysisTasks } from '../services/mockData'
 import { getDb, getAnalysisFull, saveAnalysisResult, saveA2uiData, getCardDetail, saveCardDetail, updateTaskStatus, getTaskStatus, updateProblemCardStatus } from '../services/database'
-import { requireOperation } from '../middleware/auth'
+import { requireOperation, applyDataScope, type CurrentUser } from '../middleware/auth'
 
 const router = Router()
 
 // GET /api/analysis?taskId=&status=&page=&pageSize=&sortCol=&sortDir=
-router.get('/', (req, res) => {
+router.get('/', requireOperation('view_analysis'), (req, res) => {
   const {
     taskId,
     status,
@@ -18,37 +18,45 @@ router.get('/', (req, res) => {
 
   try {
     const db = getDb()
+    const user = (req as any).currentUser as CurrentUser
+    const scope = applyDataScope(user, 'analysis_tasks')
+
     let where = 'WHERE 1=1'
     const params: any[] = []
 
+    // Apply data scope from RBAC
+    if (scope.sql) {
+      where += scope.sql
+    }
+
     if (taskId && typeof taskId === 'string') {
-      where += ' AND id LIKE ?'
+      where += ' AND at.id LIKE ?'
       params.push(`%${taskId}%`)
     }
     if (status && typeof status === 'string') {
-      where += ' AND status = ?'
+      where += ' AND at.status = ?'
       params.push(status)
     }
 
-    const countRow = db.prepare(`SELECT COUNT(*) as total FROM analysis_tasks ${where}`).get(...params) as any
+    const countRow = db.prepare(`SELECT COUNT(*) as total FROM analysis_tasks at ${where}`).get(...params) as any
     const total = countRow?.total || 0
 
     const p = Math.max(1, parseInt(page as string, 10))
     const ps = Math.max(1, parseInt(pageSize as string, 10))
     const offset = (p - 1) * ps
 
-    let orderBy = 'ORDER BY created_at DESC'
+    let orderBy = 'ORDER BY at.created_at DESC'
     if (sortCol && typeof sortCol === 'string') {
-      const col = sortCol === 'createdAt' ? 'created_at' :
-                  sortCol === 'completedAt' ? 'completed_at' :
-                  sortCol === 'relatedContracts' ? 'created_at' : sortCol
+      const col = sortCol === 'createdAt' ? 'at.created_at' :
+                  sortCol === 'completedAt' ? 'at.completed_at' :
+                  sortCol === 'relatedContracts' ? 'at.created_at' : `at.${sortCol}`
       const dir = sortDir === 'asc' ? 'ASC' : 'DESC'
       orderBy = `ORDER BY ${col} ${dir}`
     }
 
     const rows = db.prepare(
-      `SELECT id, title, description, agent, initiator, status, created_at, completed_at, skill_id, skill_name
-       FROM analysis_tasks ${where} ${orderBy} LIMIT ? OFFSET ?`
+      `SELECT at.id, at.title, at.description, at.agent, at.initiator, at.status, at.created_at, at.completed_at, at.skill_id, at.skill_name
+       FROM analysis_tasks at ${where} ${orderBy} LIMIT ? OFFSET ?`
     ).all(...params, ps, offset) as any[]
 
     // Convert to frontend format
@@ -96,7 +104,7 @@ function getRelatedContracts(db: any, taskId: string): string[] {
 }
 
 // GET /api/analysis/:id - single task
-router.get('/:id', (req, res) => {
+router.get('/:id', requireOperation('view_analysis'), (req, res) => {
   try {
     const db = getDb()
     const row = db.prepare(
@@ -131,7 +139,7 @@ router.get('/:id', (req, res) => {
 })
 
 // GET /api/analysis/:id/full - full analysis result with orders, categories, problems, todos
-router.get('/:id/full', (req, res) => {
+router.get('/:id/full', requireOperation('view_analysis'), (req, res) => {
   try {
     const result = getAnalysisFull(req.params.id)
     if (!result) {

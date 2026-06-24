@@ -9,9 +9,9 @@ import { useChatStore } from '../stores/chatStore'
 import type { ExecutionTask, ExecutionTaskStatus, BusinessType, ExecutionPriority } from '../types'
 import type { Column } from '../components/common/DataTable'
 
-const subNavKeys = ['all', 'ship', 'inbound', 'contract', 'exception'] as const
+const subNavKeys = ['all', 'overdue', 'todo', 'done'] as const
 const subNavLabels: Record<string, string> = {
-  all: '全部任务', ship: '发货任务', inbound: '入库任务', contract: '合同确认', exception: '异常处理',
+  all: '全部任务', overdue: '逾期任务', todo: '待办任务', done: '已完成任务',
 }
 
 const priorityOptions = [
@@ -109,16 +109,17 @@ function FilterGroup({ title, options, activeValue, onChange, showSearch, search
 export default function TaskListPage() {
   const navigate = useNavigate()
   const hasOperation = useAuthStore((s) => s.hasOperation)
+  const user = useAuthStore((s) => s.user)
   const sendMessage = useChatStore((s) => s.sendMessage)
-  const [activeCategory, setActiveCategory] = useState<BusinessType | 'all'>('all')
+  const [activeTab, setActiveTab] = useState<'all' | 'overdue' | 'todo' | 'done'>('all')
   const [filterContract, setFilterContract] = useState('all')
   const [filterPriority, setFilterPriority] = useState<ExecutionPriority | 'all'>('all')
   const [filterStatus, setFilterStatus] = useState<ExecutionTaskStatus | 'all'>('all')
   const [filterAssignee, setFilterAssignee] = useState('all')
   const [searchText, setSearchText] = useState('')
   const [quickFilters, setQuickFilters] = useState<Set<string>>(new Set())
-  const [sortField, setSortField] = useState<string>('id')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [sortField, setSortField] = useState<string>('created_at')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
@@ -133,13 +134,22 @@ export default function TaskListPage() {
       const params: Record<string, string> = {
         page: String(currentPage),
         pageSize: String(pageSize),
+        sortCol: sortField,
+        sortDir: sortDir,
       }
-      if (activeCategory !== 'all') params.category = activeCategory
+      // Map tab to status filter
+      if (activeTab === 'overdue') params.status = 'overdue'
+      else if (activeTab === 'todo') params.status = 'pending,progress'
+      else if (activeTab === 'done') params.status = 'done'
+      // Sidebar filters (override tab if set)
       if (filterPriority !== 'all') params.priority = filterPriority
       if (filterStatus !== 'all') params.status = filterStatus
       if (filterAssignee !== 'all') params.assignee = filterAssignee
       if (filterContract !== 'all') params.contractNumber = filterContract
       if (searchText.trim()) params.search = searchText.trim()
+      // Quick filters
+      if (quickFilters.has('high')) params.priority = 'high'
+      if (quickFilters.has('mine')) params.assignee = user?.displayName || ''
 
       const res = await api.executionTasks.list(params)
       setTasks(res.data)
@@ -149,21 +159,24 @@ export default function TaskListPage() {
       console.error('Failed to load execution tasks:', err)
       setDataReady(true)
     }
-  }, [currentPage, pageSize, activeCategory, filterPriority, filterStatus, filterAssignee, filterContract, searchText])
+  }, [currentPage, pageSize, sortField, sortDir, activeTab, filterPriority, filterStatus, filterAssignee, filterContract, searchText, quickFilters, user])
 
   useEffect(() => {
     loadTasks()
   }, [loadTasks])
 
   const handleSort = useCallback((field: string) => {
-    if (sortField === field) {
-      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortField(field)
-      setSortDir('asc')
-    }
+    setSortField(prevField => {
+      if (prevField === field) {
+        setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+        return prevField
+      } else {
+        setSortDir('asc')
+        return field
+      }
+    })
     setCurrentPage(1)
-  }, [sortField])
+  }, [])
 
   const toggleQuickFilter = useCallback((key: string) => {
     setQuickFilters(prev => {
@@ -175,30 +188,19 @@ export default function TaskListPage() {
     setCurrentPage(1)
   }, [])
 
-  const filteredTasks = useMemo(() => {
-    let list = [...tasks]
+  const canView = hasOperation('view_todos')
 
-    if (quickFilters.has('overdue')) list = list.filter(t => t.status === 'overdue')
-    if (quickFilters.has('high')) list = list.filter(t => t.priority === 'high')
-    if (quickFilters.has('mine')) list = list.filter(t => t.assignee === '张伟')
-    if (quickFilters.has('today')) list = list.filter(t => t.due_date === '2024/11/14')
-
-    list.sort((a, b) => {
-      let cmp = 0
-      if (sortField === 'id') cmp = a.id.localeCompare(b.id)
-      else if (sortField === 'priority') cmp = priorityOrder(a.priority) - priorityOrder(b.priority)
-      else if (sortField === 'dueDate') cmp = (a.due_date || '').localeCompare(b.due_date || '')
-      return sortDir === 'asc' ? cmp : -cmp
-    })
-
-    return list
-  }, [tasks, quickFilters, sortField, sortDir])
+  // Quick filters apply as additional API params (handled in loadTasks via quickFilters)
+  // No client-side filtering — all sorting/filtering is server-side
 
   const subNavItems = useMemo(() =>
     subNavKeys.map(key => ({
       key,
       label: subNavLabels[key],
-      count: key === 'all' ? total : tasks.filter(t => t.category === key).length,
+      count: key === 'all' ? total
+        : key === 'overdue' ? tasks.filter(t => t.status === 'overdue').length
+        : key === 'todo' ? tasks.filter(t => t.status === 'pending' || t.status === 'progress').length
+        : tasks.filter(t => t.status === 'done').length,
     })),
   [tasks, total])
 
@@ -240,10 +242,8 @@ export default function TaskListPage() {
   }
 
   const quickFilterChips = [
-    { key: 'overdue', label: '逾期任务' },
-    { key: 'today', label: '今日到期' },
-    { key: 'mine', label: '我的任务' },
     { key: 'high', label: '高优先级' },
+    { key: 'mine', label: '我的任务' },
   ]
 
   const statCards = [
@@ -256,7 +256,7 @@ export default function TaskListPage() {
 
   const exportCSV = () => {
     const header = '任务编号,关联合同,任务说明,步骤数,优先级,负责人,截止日期,状态'
-    const rows = filteredTasks.map(t => `${t.id},${t.contract_number},"${t.title} ${t.description}",${t.stepCount || 1},${t.priorityLabel},${t.assignee},${t.due_date},${t.statusLabel}`)
+    const rows = tasks.map(t => `${t.id},${t.contract_number},"${t.title} ${t.description}",${t.stepCount || 1},${t.priorityLabel},${t.assignee},${t.due_date},${t.statusLabel}`)
     const csv = '﻿' + [header, ...rows].join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -375,16 +375,27 @@ export default function TaskListPage() {
     },
   ]
 
-  const handleCategoryChange = (key: string) => {
-    setActiveCategory(key as BusinessType | 'all')
+  const handleTabChange = (key: string) => {
+    setActiveTab(key as 'all' | 'overdue' | 'todo' | 'done')
     setFilterContract('all')
     setCurrentPage(1)
+  }
+
+  if (!canView) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        <SubNav items={subNavItems} activeKey={activeTab} onChange={handleTabChange} />
+        <div className="flex-1 flex items-center justify-center text-sm text-[var(--color-muted)]">
+          无权限访问 — 需要 view_todos 操作权限
+        </div>
+      </div>
+    )
   }
 
   if (!dataReady) {
     return (
       <div className="flex flex-col h-full overflow-hidden">
-        <SubNav items={subNavItems} activeKey={activeCategory} onChange={handleCategoryChange} />
+        <SubNav items={subNavItems} activeKey={activeTab} onChange={handleTabChange} />
         <div className="flex-1 flex items-center justify-center text-sm text-[var(--color-muted)]">加载中...</div>
       </div>
     )
@@ -394,8 +405,8 @@ export default function TaskListPage() {
     <div className="flex flex-col h-full overflow-hidden">
       <SubNav
         items={subNavItems}
-        activeKey={activeCategory}
-        onChange={handleCategoryChange}
+        activeKey={activeTab}
+        onChange={handleTabChange}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -506,7 +517,7 @@ export default function TaskListPage() {
           <div className="flex-1 overflow-hidden">
             <DataTable<ExecutionTask>
               columns={columns}
-              data={filteredTasks}
+              data={tasks}
               rowKey="id"
               selectable={selectMode}
               selectedRowKeys={Array.from(selectedTasks)}

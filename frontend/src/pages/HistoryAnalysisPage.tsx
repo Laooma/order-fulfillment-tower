@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { cn } from '../lib/utils'
 import SubNav from '../components/SubNav'
 import { api } from '../lib/api'
+import { useAuthStore } from '../stores/authStore'
 
 /* ── Types ── */
 interface HistoryTask {
@@ -491,6 +492,8 @@ function StatsView() {
 export default function HistoryAnalysisPage() {
   const [view, setView] = useState<'list' | 'stats'>('list')
   const [dataReady, setDataReady] = useState(false)
+  const hasOperation = useAuthStore((s) => s.hasOperation)
+  const canView = hasOperation('view_analysis')
 
   useEffect(() => {
     api.analysis.list({ pageSize: '100' })
@@ -503,6 +506,14 @@ export default function HistoryAnalysisPage() {
         setDataReady(true)
       })
   }, [])
+
+  if (!canView) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-sm text-[var(--color-muted)]">
+        无权限访问 — 需要 view_analysis 操作权限
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full">
