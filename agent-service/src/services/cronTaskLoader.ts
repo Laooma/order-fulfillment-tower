@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import type { CronTask } from '../types'
 
-const CRON_TASKS_DIR = process.env.CRON_TASKS_DIR || path.resolve(process.cwd(), '../.claw/cron-tasks')
+const CRON_TASKS_DIR = process.env.CRON_TASKS_DIR || path.resolve(process.cwd(), '.claw/cron-tasks')
 
 function ensureDir(): void {
   if (!fs.existsSync(CRON_TASKS_DIR)) {

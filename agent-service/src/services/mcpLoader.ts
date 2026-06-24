@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import type { McpServer } from '../types'
 
-const MCP_DIR = process.env.MCP_DIR || path.resolve(process.cwd(), '../.claw/mcp')
+const MCP_DIR = process.env.MCP_DIR || path.resolve(process.cwd(), '.claw/mcp')
 
 export interface McpServerMeta {
   id: string

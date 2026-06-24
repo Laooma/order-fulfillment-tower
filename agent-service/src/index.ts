@@ -1,4 +1,6 @@
-import 'dotenv/config'
+import path from 'path'
+import dotenv from 'dotenv'
+dotenv.config({ path: path.resolve(process.cwd(), '.claw/.env') })
 import express from 'express'
 import cors from 'cors'
 import { createServer } from 'http'

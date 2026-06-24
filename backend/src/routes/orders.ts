@@ -30,7 +30,7 @@ router.get('/', (req, res) => {
     data = data.filter((o) => o.brand.includes(brand))
   }
   if (contractNumber && typeof contractNumber === 'string') {
-    data = data.filter((o) => (o.contractNumber || o.contract_number || '').includes(contractNumber))
+    data = data.filter((o) => ((o as any).contractNumber || (o as any).contract_number || '').includes(contractNumber))
   }
   if (shipMethod && typeof shipMethod === 'string') {
     data = data.filter((o) => o.shipMethod === shipMethod)

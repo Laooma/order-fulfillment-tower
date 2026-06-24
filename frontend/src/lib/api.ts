@@ -178,6 +178,25 @@ export const api = {
       request<PaginatedResponse<any>>(`/tasks?${new URLSearchParams(params).toString()}`),
     get: (id: string) => request<any>(`/tasks/${id}`),
   },
+  executionTasks: {
+    list: (params?: Record<string, string>) =>
+      request<PaginatedResponse<any>>(`/execution-tasks?${new URLSearchParams(params).toString()}`),
+    get: (id: string) => request<any>(`/execution-tasks/${id}`),
+    create: (data: any) => request<any>('/execution-tasks', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => request<any>(`/execution-tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request<{ success: boolean }>(`/execution-tasks/${id}`, { method: 'DELETE' }),
+    migrate: () => request<{ success: boolean; migrated: number }>('/execution-tasks/migrate', { method: 'POST' }),
+    steps: (id: string) => request<{ data: any[] }>(`/execution-tasks/${id}/steps`),
+    createStep: (id: string, data: any) => request<any>(`/execution-tasks/${id}/steps`, { method: 'POST', body: JSON.stringify(data) }),
+    updateStep: (stepId: string, data: any) => request<any>(`/execution-tasks/steps/${stepId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    completeStep: (stepId: string, data?: any) => request<any>(`/execution-tasks/steps/${stepId}/complete`, { method: 'PUT', body: JSON.stringify(data || {}) }),
+    executeStep: (stepId: string, data?: any) => request<any>(`/execution-tasks/steps/${stepId}/execute`, { method: 'PUT', body: JSON.stringify(data || {}) }),
+    options: (stepId: string) => request<{ data: any[] }>(`/execution-tasks/steps/${stepId}/options`),
+    createOption: (stepId: string, data: any) => request<any>(`/execution-tasks/steps/${stepId}/options`, { method: 'POST', body: JSON.stringify(data) }),
+    decide: (stepId: string, data: any) => request<any>(`/execution-tasks/steps/${stepId}/decide`, { method: 'PUT', body: JSON.stringify(data) }),
+    handover: (id: string, data: any) => request<any>(`/execution-tasks/${id}/handover`, { method: 'PUT', body: JSON.stringify(data) }),
+    handovers: (id: string) => request<{ data: any[] }>(`/execution-tasks/${id}/handovers`),
+  },
   analysis: {
     list: (params?: Record<string, string>) =>
       request<PaginatedResponse<any>>(`/analysis?${new URLSearchParams(params).toString()}`),

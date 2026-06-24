@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import type { Skill, SkillFile } from '../types'
 
-const SKILLS_DIR = process.env.SKILLS_DIR || path.resolve(process.cwd(), '../.claw/skills')
+const SKILLS_DIR = process.env.SKILLS_DIR || path.resolve(process.cwd(), '.claw/skills')
 
 function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
   const frontmatter: Record<string, string> = {}

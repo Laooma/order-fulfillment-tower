@@ -29,7 +29,7 @@ interface LlmConfig {
 
 function getLlmConfig(): LlmConfig | null {
   try {
-    const configPath = path.join(__dirname, '..', '..', '..', 'agent-service', 'llm.config.json')
+    const configPath = path.join(__dirname, '..', '..', '..', 'agent-service', '.claw', 'llm.config.json')
     const raw = fs.readFileSync(configPath, 'utf-8')
     const config = JSON.parse(raw)
     const provider = config.providers?.find((p: any) => p.name === 'DeepSeek')

@@ -400,7 +400,7 @@ biz_contracts (合同)
 
 - **DeepSeek**: deepseek-chat / deepseek-reasoner / deepseek-v4-flash / deepseek-v4-pro
 - **火山引擎豆包**: doubao-seed-2.0-pro
-- 模型配置存储在 `agent-service/llm.config.json`，可通过设置页面动态修改
+- 模型配置存储在 `agent-service/.claw/llm.config.json`，可通过设置页面动态修改
 - MCP Pool: 4 个客户端连接池，支持工具并发调用
 
 ---

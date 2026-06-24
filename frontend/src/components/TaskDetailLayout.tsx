@@ -22,9 +22,11 @@ interface TaskDetailLayoutProps {
   contractId?: string
   task?: TaskInfo | null
   metaConfig?: MetaPanelConfig
+  onHandover?: () => void
+  summary?: React.ReactNode
 }
 
-export default function TaskDetailLayout({ title, children, taskId, contractId, task, metaConfig }: TaskDetailLayoutProps) {
+export default function TaskDetailLayout({ title, children, taskId, contractId, task, metaConfig, onHandover, summary }: TaskDetailLayoutProps) {
   const navigate = useNavigate()
   const sendMessage = useChatStore((s) => s.sendMessage)
   const analysisTaskId = taskId ? getAnalysisTaskId(taskId) : ''
@@ -45,22 +47,25 @@ export default function TaskDetailLayout({ title, children, taskId, contractId, 
     <div className="flex flex-col h-full overflow-hidden">
       {/* Top header bar */}
       <div className="detail-header-bar">
-        <div className="detail-header-left">
-          <button onClick={() => navigate('/tasks')} className="detail-back-btn">
-            ← 返回任务列表
-          </button>
-          <span className="detail-header-title">{title}</span>
+        <div className="detail-header-top">
+          <div className="detail-header-left">
+            <button onClick={() => navigate('/tasks')} className="detail-back-btn">
+              ← 返回任务列表
+            </button>
+            <span className="detail-header-title">{title}</span>
+          </div>
+          <div className="detail-header-actions">
+            {isDone ? (
+              <span className="detail-done-badge">✓ 已完成</span>
+            ) : (
+              <>
+                <button className="btn btn-outline" onClick={onHandover}>转交</button>
+                <button className="btn btn-accent" onClick={handleMarkComplete}>标记完成</button>
+              </>
+            )}
+          </div>
         </div>
-        <div className="detail-header-actions">
-          {isDone ? (
-            <span className="detail-done-badge">✓ 已完成</span>
-          ) : (
-            <>
-              <button className="btn btn-outline">转交</button>
-              <button className="btn btn-accent" onClick={handleMarkComplete}>标记完成</button>
-            </>
-          )}
-        </div>
+        {summary && <div className="detail-header-summary">{summary}</div>}
       </div>
 
       <div className="flex flex-1 overflow-hidden">

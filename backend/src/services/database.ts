@@ -288,6 +288,66 @@ function initSchema(db: Database.Database) {
       delivery_path_json TEXT DEFAULT '[]'
     );
 
+    CREATE TABLE IF NOT EXISTS execution_tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      category TEXT DEFAULT 'ship',
+      priority TEXT DEFAULT 'medium',
+      status TEXT DEFAULT 'pending',
+      assignee TEXT NOT NULL,
+      supervisor TEXT DEFAULT '',
+      due_date TEXT DEFAULT '',
+      source_analysis_task_id TEXT DEFAULT '',
+      order_id TEXT DEFAULT '',
+      contract_number TEXT DEFAULT '',
+      created_by TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      completed_at TEXT DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS execution_steps (
+      id TEXT PRIMARY KEY,
+      execution_task_id TEXT NOT NULL REFERENCES execution_tasks(id) ON DELETE CASCADE,
+      step_order INTEGER NOT NULL,
+      step_type TEXT NOT NULL CHECK(step_type IN ('agent', 'manual', 'decision')),
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending',
+      assignee TEXT DEFAULT '',
+      handler TEXT DEFAULT '',
+      started_at TEXT DEFAULT '',
+      completed_at TEXT DEFAULT '',
+      stay_duration INTEGER DEFAULT 0,
+      result_data TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS decision_options (
+      id TEXT PRIMARY KEY,
+      step_id TEXT NOT NULL REFERENCES execution_steps(id) ON DELETE CASCADE,
+      option_order INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      estimated_duration TEXT DEFAULT '',
+      risk_level TEXT DEFAULT 'low',
+      cost_estimate TEXT DEFAULT '',
+      is_selected INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS task_handover_records (
+      id TEXT PRIMARY KEY,
+      execution_task_id TEXT NOT NULL REFERENCES execution_tasks(id) ON DELETE CASCADE,
+      from_user TEXT NOT NULL,
+      to_user TEXT NOT NULL,
+      reason TEXT DEFAULT '',
+      handed_by TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS chat_messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id TEXT NOT NULL,
@@ -1121,6 +1181,358 @@ export function deleteSubagent(id: string) {
   const d = getDb()
   const result = d.prepare('DELETE FROM subagents WHERE id = ?').run(id)
   return { success: result.changes > 0 }
+}
+
+// ── Execution Tasks ──
+
+export interface ExecutionTaskInput {
+  id?: string
+  title: string
+  description?: string
+  category?: string
+  priority?: string
+  status?: string
+  assignee: string
+  supervisor?: string
+  dueDate?: string
+  sourceAnalysisTaskId?: string
+  orderId?: string
+  contractNumber?: string
+  createdBy?: string
+}
+
+export interface ExecutionStepInput {
+  id?: string
+  executionTaskId: string
+  stepOrder: number
+  stepType: 'agent' | 'manual' | 'decision'
+  title: string
+  description?: string
+  status?: string
+  assignee?: string
+  handler?: string
+  startedAt?: string
+  completedAt?: string
+  stayDuration?: number
+  resultData?: Record<string, unknown>
+}
+
+export interface DecisionOptionInput {
+  id?: string
+  stepId: string
+  optionOrder: number
+  title: string
+  description?: string
+  estimatedDuration?: string
+  riskLevel?: string
+  costEstimate?: string
+  isSelected?: boolean
+}
+
+export function createExecutionTask(data: ExecutionTaskInput) {
+  const d = getDb()
+  const id = data.id || `ET${Date.now()}_${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`
+  const now = new Date().toLocaleString('zh-CN')
+  d.prepare(`
+    INSERT INTO execution_tasks (id, title, description, category, priority, status, assignee, supervisor, due_date, source_analysis_task_id, order_id, contract_number, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, data.title, data.description || '', data.category || 'ship', data.priority || 'medium', data.status || 'pending',
+    data.assignee, data.supervisor || '', data.dueDate || '', data.sourceAnalysisTaskId || '', data.orderId || '',
+    data.contractNumber || '', data.createdBy || '', now, now
+  )
+  return getExecutionTask(id)
+}
+
+export function getExecutionTask(id: string) {
+  const d = getDb()
+  const task = d.prepare('SELECT * FROM execution_tasks WHERE id = ?').get(id) as any
+  if (!task) return null
+  const steps = d.prepare('SELECT * FROM execution_steps WHERE execution_task_id = ? ORDER BY step_order').all(id) as any[]
+  return {
+    ...task,
+    steps: steps.map(s => ({
+      ...s,
+      resultData: JSON.parse(s.result_data || '{}'),
+    })),
+  }
+}
+
+export function listExecutionTasks(params: {
+  status?: string
+  category?: string
+  assignee?: string
+  supervisor?: string
+  priority?: string
+  search?: string
+  page?: number
+  pageSize?: number
+} = {}) {
+  const d = getDb()
+  let where = 'WHERE 1=1'
+  const values: any[] = []
+
+  if (params.status && params.status !== 'all') {
+    where += ' AND status = ?'
+    values.push(params.status)
+  }
+  if (params.category && params.category !== 'all') {
+    where += ' AND category = ?'
+    values.push(params.category)
+  }
+  if (params.assignee && params.assignee !== 'all') {
+    where += ' AND assignee = ?'
+    values.push(params.assignee)
+  }
+  if (params.supervisor && params.supervisor !== 'all') {
+    where += ' AND supervisor = ?'
+    values.push(params.supervisor)
+  }
+  if (params.priority && params.priority !== 'all') {
+    where += ' AND priority = ?'
+    values.push(params.priority)
+  }
+  if (params.search) {
+    const q = `%${params.search.toLowerCase()}%`
+    where += ' AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(assignee) LIKE ? OR LOWER(contract_number) LIKE ?)'
+    values.push(q, q, q, q)
+  }
+
+  const total = (d.prepare(`SELECT COUNT(*) as c FROM execution_tasks ${where}`).get(...values) as any)?.c || 0
+  const page = Math.max(1, params.page || 1)
+  const pageSize = Math.max(1, params.pageSize || 20)
+  const offset = (page - 1) * pageSize
+
+  const tasks = d.prepare(`
+    SELECT * FROM execution_tasks ${where}
+    ORDER BY priority = 'high' DESC, status = 'overdue' DESC, due_date ASC
+    LIMIT ? OFFSET ?
+  `).all(...values, pageSize, offset) as any[]
+
+  return {
+    data: tasks.map(t => ({
+      ...t,
+      stepCount: (d.prepare('SELECT COUNT(*) as c FROM execution_steps WHERE execution_task_id = ?').get(t.id) as any)?.c || 0,
+    })),
+    total, page, pageSize,
+  }
+}
+
+export function updateExecutionTask(id: string, data: Partial<ExecutionTaskInput>) {
+  const d = getDb()
+  const sets: string[] = []
+  const values: any[] = []
+  const fieldMap: Record<string, string> = {
+    title: 'title', description: 'description', category: 'category', priority: 'priority',
+    status: 'status', assignee: 'assignee', supervisor: 'supervisor', dueDate: 'due_date',
+    sourceAnalysisTaskId: 'source_analysis_task_id', orderId: 'order_id', contractNumber: 'contract_number',
+    createdBy: 'created_by',
+  }
+  for (const [key, col] of Object.entries(fieldMap)) {
+    if ((data as any)[key] !== undefined) {
+      sets.push(`${col} = ?`)
+      values.push((data as any)[key])
+    }
+  }
+  if (sets.length === 0) return getExecutionTask(id)
+  sets.push("updated_at = datetime('now','localtime')")
+  values.push(id)
+  d.prepare(`UPDATE execution_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  return getExecutionTask(id)
+}
+
+export function deleteExecutionTask(id: string) {
+  const d = getDb()
+  const result = d.prepare('DELETE FROM execution_tasks WHERE id = ?').run(id)
+  return { success: result.changes > 0 }
+}
+
+export function createExecutionStep(data: ExecutionStepInput) {
+  const d = getDb()
+  const id = data.id || `ES${Date.now()}_${data.stepOrder}_${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`
+  d.prepare(`
+    INSERT INTO execution_steps (id, execution_task_id, step_order, step_type, title, description, status, assignee, handler, started_at, completed_at, stay_duration, result_data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, data.executionTaskId, data.stepOrder, data.stepType, data.title, data.description || '',
+    data.status || 'pending', data.assignee || '', data.handler || '', data.startedAt || '',
+    data.completedAt || '', data.stayDuration || 0, JSON.stringify(data.resultData || {})
+  )
+  return getExecutionStep(id)
+}
+
+export function getExecutionStep(id: string) {
+  const d = getDb()
+  const step = d.prepare('SELECT * FROM execution_steps WHERE id = ?').get(id) as any
+  if (!step) return null
+  return { ...step, resultData: JSON.parse(step.result_data || '{}') }
+}
+
+export function updateExecutionStep(id: string, data: Partial<ExecutionStepInput>) {
+  const d = getDb()
+  const sets: string[] = []
+  const values: any[] = []
+  const fieldMap: Record<string, string> = {
+    stepOrder: 'step_order', stepType: 'step_type', title: 'title', description: 'description',
+    status: 'status', assignee: 'assignee', handler: 'handler', startedAt: 'started_at',
+    completedAt: 'completed_at', stayDuration: 'stay_duration',
+  }
+  for (const [key, col] of Object.entries(fieldMap)) {
+    if ((data as any)[key] !== undefined) {
+      sets.push(`${col} = ?`)
+      values.push((data as any)[key])
+    }
+  }
+  if (data.resultData !== undefined) {
+    sets.push('result_data = ?')
+    values.push(JSON.stringify(data.resultData))
+  }
+  if (sets.length === 0) return getExecutionStep(id)
+  sets.push("updated_at = datetime('now','localtime')")
+  values.push(id)
+  d.prepare(`UPDATE execution_steps SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  return getExecutionStep(id)
+}
+
+export function listExecutionSteps(executionTaskId: string) {
+  const d = getDb()
+  const steps = d.prepare('SELECT * FROM execution_steps WHERE execution_task_id = ? ORDER BY step_order').all(executionTaskId) as any[]
+  return steps.map(s => ({ ...s, resultData: JSON.parse(s.result_data || '{}') }))
+}
+
+export function createDecisionOption(data: DecisionOptionInput) {
+  const d = getDb()
+  const id = data.id || `DO${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`
+  d.prepare(`
+    INSERT INTO decision_options (id, step_id, option_order, title, description, estimated_duration, risk_level, cost_estimate, is_selected)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, data.stepId, data.optionOrder, data.title, data.description || '', data.estimatedDuration || '', data.riskLevel || 'low', data.costEstimate || '', data.isSelected ? 1 : 0)
+  return getDecisionOptions(data.stepId)
+}
+
+export function getDecisionOptions(stepId: string) {
+  const d = getDb()
+  return d.prepare('SELECT * FROM decision_options WHERE step_id = ? ORDER BY option_order').all(stepId) as any[]
+}
+
+export function selectDecisionOption(stepId: string, optionId: string) {
+  const d = getDb()
+  d.prepare('UPDATE decision_options SET is_selected = 0 WHERE step_id = ?').run(stepId)
+  d.prepare('UPDATE decision_options SET is_selected = 1 WHERE id = ?').run(optionId)
+  return getDecisionOptions(stepId)
+}
+
+export function createTaskHandover(data: { executionTaskId: string; fromUser: string; toUser: string; reason?: string; handedBy?: string }) {
+  const d = getDb()
+  const id = `HO${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`
+  d.prepare(`
+    INSERT INTO task_handover_records (id, execution_task_id, from_user, to_user, reason, handed_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+  `).run(id, data.executionTaskId, data.fromUser, data.toUser, data.reason || '', data.handedBy || '')
+  d.prepare('UPDATE execution_tasks SET assignee = ?, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?').run(data.toUser, data.executionTaskId)
+  return getTaskHandovers(data.executionTaskId)
+}
+
+export function getTaskHandovers(executionTaskId: string) {
+  const d = getDb()
+  return d.prepare('SELECT * FROM task_handover_records WHERE execution_task_id = ? ORDER BY created_at DESC').all(executionTaskId) as any[]
+}
+
+const categoryCodeMap: Record<string, string> = {
+  '发货任务': 'ship',
+  '入库任务': 'inbound',
+  '合同确认': 'contract',
+  '异常处理': 'exception',
+  '补发任务': 'ship',
+  '分批发货': 'ship',
+  '物流跟踪': 'ship',
+  '物流任务': 'ship',
+  '物流跟进': 'ship',
+  '海外物流': 'ship',
+  '尾单攻坚': 'ship',
+  '交付保障': 'ship',
+  '签收跟进': 'ship',
+  '签收任务': 'ship',
+  '回单任务': 'ship',
+  '收货确认': 'inbound',
+  '到货跟进': 'inbound',
+  '物料排查': 'inbound',
+  '供应排查': 'contract',
+  '供应链溯源': 'contract',
+  '收入确认任务': 'contract',
+  '系统维护': 'exception',
+  '系统修复': 'exception',
+  '异常排查': 'exception',
+  '异常标记': 'exception',
+  '风险预警': 'exception',
+  '升级处理': 'exception',
+  '紧急升级': 'exception',
+  '客户沟通': 'exception',
+  '客户紧急沟通': 'exception',
+  '客户关系维护': 'exception',
+  '测试任务': 'ship',
+}
+
+function mapCategoryCode(cat: string | undefined | null): string {
+  if (!cat) return 'ship'
+  return categoryCodeMap[cat] || 'ship'
+}
+
+export function migrateTodosToExecutionTasks() {
+  const d = getDb()
+  const existing = (d.prepare('SELECT COUNT(*) as c FROM execution_tasks').get() as any)?.c || 0
+  if (existing > 0) return { migrated: 0 }
+
+  const todos = d.prepare(`
+    SELECT at2.*, ao.analysis_task_id, ao.contract_number
+    FROM analysis_todos at2
+    JOIN analysis_orders ao ON at2.order_id = ao.id
+  `).all() as any[]
+
+  const grouped = new Map<string, any[]>()
+  for (const todo of todos) {
+    const key = `${todo.assignee}|${todo.order_id}`
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key)!.push(todo)
+  }
+
+  let migrated = 0
+  const transaction = d.transaction(() => {
+    for (const [, group] of grouped) {
+      if (group.length === 0) continue
+      const first = group[0]
+      const task = createExecutionTask({
+        title: `${first.assignee} 的执行任务 · ${first.contract_number}`,
+        description: group.map((t: any) => t.description).join('；'),
+        category: mapCategoryCode(first.category),
+        priority: first.priority,
+        status: first.status,
+        assignee: first.assignee,
+        supervisor: first.supervisor,
+        dueDate: first.due_date,
+        sourceAnalysisTaskId: first.analysis_task_id,
+        orderId: first.order_id,
+        contractNumber: first.contract_number,
+      })
+
+      for (let i = 0; i < group.length; i++) {
+        const t = group[i]
+        createExecutionStep({
+          executionTaskId: task.id,
+          stepOrder: i + 1,
+          stepType: t.task_type || 'manual',
+          title: t.description ? (t.description as string).slice(0, 50) : `步骤 ${i + 1}`,
+          description: t.description || '',
+          status: t.status,
+          assignee: t.assignee,
+        })
+      }
+      migrated++
+    }
+  })
+
+  transaction()
+  return { migrated }
 }
 
 // ── Notification Templates ──

@@ -55,7 +55,7 @@
 
 ### 2.3 各模型上下文窗口配置
 
-配置位于 `agent-service/llm.config.json`：
+配置位于 `agent-service/.claw/llm.config.json`：
 
 | 模型 | Context Window | 压缩阈值 (80%) | 警告阈值 (70%) |
 |------|:------------:|:------------:|:------------:|
@@ -306,7 +306,7 @@ status: pending
 
 ```
 agent-service/
-├── llm.config.json                  # 模型配置（contextWindow、apiKey）
+├── .claw/llm.config.json            # 模型配置（contextWindow、apiKey）
 ├── plans/                           # 计划文档输出目录
 └── src/
     ├── types/index.ts               # 类型定义（AgentMessage、Session）

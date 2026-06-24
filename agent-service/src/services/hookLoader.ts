@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import type { Hook } from '../types'
 
-const HOOKS_DIR = process.env.HOOKS_DIR || path.resolve(process.cwd(), '../.claw/hooks')
+const HOOKS_DIR = process.env.HOOKS_DIR || path.resolve(process.cwd(), '.claw/hooks')
 
 export interface HookMeta {
   id: string

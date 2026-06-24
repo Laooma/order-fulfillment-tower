@@ -1,29 +1,22 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, ChevronDown, X } from 'lucide-react'
+import { Search, ChevronDown, X, RefreshCw } from 'lucide-react'
 import SubNav from '../components/SubNav'
+import DataTable from '../components/common/DataTable'
 import { api } from '../lib/api'
 import { useAuthStore } from '../stores/authStore'
 import { useChatStore } from '../stores/chatStore'
-import type { TaskType, TaskStatus, BusinessType, Priority } from '../types'
-
-let allMockTasks: any[] = []
+import type { ExecutionTask, ExecutionTaskStatus, BusinessType, ExecutionPriority } from '../types'
+import type { Column } from '../components/common/DataTable'
 
 const subNavKeys = ['all', 'ship', 'inbound', 'contract', 'exception'] as const
 const subNavLabels: Record<string, string> = {
   all: '全部任务', ship: '发货任务', inbound: '入库任务', contract: '合同确认', exception: '异常处理',
 }
 
-
-const typeOptions = [
-  { value: 'agent', label: 'Agent任务', dot: 'var(--color-accent)' },
-  { value: 'decision', label: '决策任务', dot: 'var(--color-warning)' },
-  { value: 'manual', label: '手工任务', dot: 'var(--color-muted)' },
-]
-
 const priorityOptions = [
   { value: 'high', label: '高优先级', dot: 'var(--color-danger)' },
-  { value: 'mid', label: '中优先级', dot: 'var(--color-warning)' },
+  { value: 'medium', label: '中优先级', dot: 'var(--color-warning)' },
   { value: 'low', label: '低优先级', dot: 'var(--color-muted)' },
 ]
 
@@ -34,16 +27,12 @@ const statusOptions = [
   { value: 'done', label: '已完成', dot: 'var(--color-success)' },
 ]
 
-function priorityOrder(p: Priority) {
-  const order: Record<string, number> = { high: 0, mid: 1, low: 2 }
+function priorityOrder(p: ExecutionPriority) {
+  const order: Record<string, number> = { high: 0, medium: 1, low: 2 }
   return order[p] ?? 99
 }
 
-function getDetailPath(type: TaskType, id: string) {
-  return `/task/${type}/${id}`
-}
-
-function statusBadgeClass(s: TaskStatus) {
+function statusBadgeClass(s: ExecutionTaskStatus) {
   switch (s) {
     case 'progress': return 'progress'
     case 'overdue': return 'danger'
@@ -52,10 +41,10 @@ function statusBadgeClass(s: TaskStatus) {
   }
 }
 
-function priorityDotClass(p: Priority) {
+function priorityDotClass(p: ExecutionPriority) {
   switch (p) {
     case 'high': return 'high'
-    case 'mid': return 'mid'
+    case 'medium': return 'mid'
     case 'low': return 'low'
   }
 }
@@ -123,9 +112,8 @@ export default function TaskListPage() {
   const sendMessage = useChatStore((s) => s.sendMessage)
   const [activeCategory, setActiveCategory] = useState<BusinessType | 'all'>('all')
   const [filterContract, setFilterContract] = useState('all')
-  const [filterType, setFilterType] = useState<TaskType | 'all'>('all')
-  const [filterPriority, setFilterPriority] = useState<Priority | 'all'>('all')
-  const [filterStatus, setFilterStatus] = useState<TaskStatus | 'all'>('all')
+  const [filterPriority, setFilterPriority] = useState<ExecutionPriority | 'all'>('all')
+  const [filterStatus, setFilterStatus] = useState<ExecutionTaskStatus | 'all'>('all')
   const [filterAssignee, setFilterAssignee] = useState('all')
   const [searchText, setSearchText] = useState('')
   const [quickFilters, setQuickFilters] = useState<Set<string>>(new Set())
@@ -135,19 +123,37 @@ export default function TaskListPage() {
   const [pageSize, setPageSize] = useState(20)
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
+  const [tasks, setTasks] = useState<ExecutionTask[]>([])
+  const [total, setTotal] = useState(0)
   const [dataReady, setDataReady] = useState(false)
+  const [migrating, setMigrating] = useState(false)
+
+  const loadTasks = useCallback(async () => {
+    try {
+      const params: Record<string, string> = {
+        page: String(currentPage),
+        pageSize: String(pageSize),
+      }
+      if (activeCategory !== 'all') params.category = activeCategory
+      if (filterPriority !== 'all') params.priority = filterPriority
+      if (filterStatus !== 'all') params.status = filterStatus
+      if (filterAssignee !== 'all') params.assignee = filterAssignee
+      if (filterContract !== 'all') params.contractNumber = filterContract
+      if (searchText.trim()) params.search = searchText.trim()
+
+      const res = await api.executionTasks.list(params)
+      setTasks(res.data)
+      setTotal(res.total)
+      setDataReady(true)
+    } catch (err) {
+      console.error('Failed to load execution tasks:', err)
+      setDataReady(true)
+    }
+  }, [currentPage, pageSize, activeCategory, filterPriority, filterStatus, filterAssignee, filterContract, searchText])
 
   useEffect(() => {
-    api.tasks.list({ pageSize: '100' })
-      .then((res) => {
-        allMockTasks = res.data
-        setDataReady(true)
-      })
-      .catch((err) => {
-        console.error('Failed to load tasks:', err)
-        setDataReady(true)
-      })
-  }, [])
+    loadTasks()
+  }, [loadTasks])
 
   const handleSort = useCallback((field: string) => {
     if (sortField === field) {
@@ -170,102 +176,67 @@ export default function TaskListPage() {
   }, [])
 
   const filteredTasks = useMemo(() => {
-    let tasks = [...allMockTasks]
+    let list = [...tasks]
 
-    if (activeCategory !== 'all') tasks = tasks.filter(t => t.category === activeCategory)
-    if (filterContract !== 'all') tasks = tasks.filter(t => t.contractId === filterContract)
-    if (filterType !== 'all') tasks = tasks.filter(t => t.type === filterType)
-    if (filterPriority !== 'all') tasks = tasks.filter(t => t.priority === filterPriority)
-    if (filterStatus !== 'all') tasks = tasks.filter(t => t.status === filterStatus)
-    if (filterAssignee !== 'all') tasks = tasks.filter(t => t.assignee === filterAssignee)
+    if (quickFilters.has('overdue')) list = list.filter(t => t.status === 'overdue')
+    if (quickFilters.has('high')) list = list.filter(t => t.priority === 'high')
+    if (quickFilters.has('mine')) list = list.filter(t => t.assignee === '张伟')
+    if (quickFilters.has('today')) list = list.filter(t => t.due_date === '2024/11/14')
 
-    if (quickFilters.has('overdue')) tasks = tasks.filter(t => t.status === 'overdue')
-    if (quickFilters.has('high')) tasks = tasks.filter(t => t.priority === 'high')
-    if (quickFilters.has('mine')) tasks = tasks.filter(t => t.assignee === '张伟')
-    if (quickFilters.has('today')) tasks = tasks.filter(t => t.dueDate === '2024/11/14')
-
-    if (searchText.trim()) {
-      const s = searchText.toLowerCase()
-      tasks = tasks.filter(t =>
-        t.id.toLowerCase().includes(s) ||
-        t.contractId.toLowerCase().includes(s) ||
-        t.title.includes(s) ||
-        t.description.includes(s) ||
-        t.assignee.includes(s)
-      )
-    }
-
-    tasks.sort((a, b) => {
+    list.sort((a, b) => {
       let cmp = 0
       if (sortField === 'id') cmp = a.id.localeCompare(b.id)
       else if (sortField === 'priority') cmp = priorityOrder(a.priority) - priorityOrder(b.priority)
-      else if (sortField === 'dueDate') cmp = a.dueDate.localeCompare(b.dueDate)
+      else if (sortField === 'dueDate') cmp = (a.due_date || '').localeCompare(b.due_date || '')
       return sortDir === 'asc' ? cmp : -cmp
     })
 
-    return tasks
-  }, [activeCategory, filterContract, filterType, filterPriority, filterStatus, filterAssignee, quickFilters, searchText, sortField, sortDir, dataReady])
-
-  const totalCount = filteredTasks.length
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
-  const safePage = Math.min(currentPage, totalPages)
-  const startIdx = (safePage - 1) * pageSize
-  const pageTasks = filteredTasks.slice(startIdx, startIdx + pageSize)
+    return list
+  }, [tasks, quickFilters, sortField, sortDir])
 
   const subNavItems = useMemo(() =>
     subNavKeys.map(key => ({
       key,
       label: subNavLabels[key],
-      count: key === 'all' ? allMockTasks.length : allMockTasks.filter(t => t.category === key).length,
+      count: key === 'all' ? total : tasks.filter(t => t.category === key).length,
     })),
-  [dataReady])
+  [tasks, total])
 
   const contracts = useMemo(() => {
     const map = new Map<string, number>()
-    allMockTasks.forEach(t => { if (t.contractId) map.set(t.contractId, (map.get(t.contractId) || 0) + 1) })
+    tasks.forEach(t => { if (t.contract_number) map.set(t.contract_number, (map.get(t.contract_number) || 0) + 1) })
     return Array.from(map.entries()).map(([value, count]) => ({ value, label: value, count }))
-  }, [dataReady])
+  }, [tasks])
 
   const assignees = useMemo(() => {
     const map = new Map<string, number>()
-    allMockTasks.forEach(t => { if (t.assignee) map.set(t.assignee, (map.get(t.assignee) || 0) + 1) })
+    tasks.forEach(t => { if (t.assignee) map.set(t.assignee, (map.get(t.assignee) || 0) + 1) })
     return Array.from(map.entries()).map(([value, count]) => ({ value, label: value, count }))
-  }, [dataReady])
+  }, [tasks])
 
   const stats = useMemo(() => ({
-    all: allMockTasks.length,
-    progress: allMockTasks.filter(t => t.status === 'progress').length,
-    overdue: allMockTasks.filter(t => t.status === 'overdue').length,
-    pending: allMockTasks.filter(t => t.status === 'pending').length,
-    done: allMockTasks.filter(t => t.status === 'done').length,
-  }), [dataReady])
-
-  const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedTasks(new Set(pageTasks.map(t => t.id)))
-    } else {
-      setSelectedTasks(new Set())
-    }
-  }
-
-  const handleSelectTask = (id: string, checked: boolean) => {
-    setSelectedTasks(prev => {
-      const next = new Set(prev)
-      if (checked) next.add(id)
-      else next.delete(id)
-      return next
-    })
-  }
-
-  const handleCategoryChange = (key: string) => {
-    setActiveCategory(key as BusinessType | 'all')
-    setFilterContract('all')
-    setCurrentPage(1)
-  }
+    all: total,
+    progress: tasks.filter(t => t.status === 'progress').length,
+    overdue: tasks.filter(t => t.status === 'overdue').length,
+    pending: tasks.filter(t => t.status === 'pending').length,
+    done: tasks.filter(t => t.status === 'done').length,
+  }), [tasks, total])
 
   const handleMarkComplete = (task: { id: string; title: string }) => {
     if (!sendMessage) return
-    sendMessage(`请使用 mark_task_complete 工具验证任务 ${task.id}（${task.title}）是否真正完成，验证后发送飞书通知`)
+    sendMessage(`请使用 mark_task_complete 工具验证执行任务 ${task.id}（${task.title}）是否真正完成，验证后发送飞书通知`)
+  }
+
+  const handleMigrate = async () => {
+    setMigrating(true)
+    try {
+      await api.executionTasks.migrate()
+      await loadTasks()
+    } catch (err) {
+      console.error('Migrate failed:', err)
+    } finally {
+      setMigrating(false)
+    }
   }
 
   const quickFilterChips = [
@@ -284,21 +255,130 @@ export default function TaskListPage() {
   ]
 
   const exportCSV = () => {
-    const header = '任务编号,关联合同,任务类型,任务说明,优先级,负责人,截止日期,状态'
-    const rows = filteredTasks.map(t => `${t.id},${t.contractId},${t.typeLabel},"${t.title} ${t.description}",${t.priorityLabel},${t.assignee},${t.dueDate},${t.statusLabel}`)
+    const header = '任务编号,关联合同,任务说明,步骤数,优先级,负责人,截止日期,状态'
+    const rows = filteredTasks.map(t => `${t.id},${t.contract_number},"${t.title} ${t.description}",${t.stepCount || 1},${t.priorityLabel},${t.assignee},${t.due_date},${t.statusLabel}`)
     const csv = '﻿' + [header, ...rows].join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = '任务列表.csv'
+    a.download = '执行任务列表.csv'
     a.click()
     URL.revokeObjectURL(url)
   }
 
-  const sortArrow = (field: string) => {
-    if (sortField !== field) return '↕'
-    return sortDir === 'asc' ? '↑' : '↓'
+  const columns: Column<ExecutionTask>[] = [
+    {
+      key: 'id',
+      title: '任务编号',
+      width: 150,
+      sortable: true,
+      render: (_, task) => (
+        <button
+          onClick={() => navigate(`/task/${task.id}`)}
+          className="td-id"
+        >
+          {task.id}
+        </button>
+      ),
+    },
+    {
+      key: 'contract_number',
+      title: '关联合同',
+      width: 130,
+      render: (v) => v || '—',
+    },
+    {
+      key: 'title',
+      title: '任务说明',
+      render: (v, task) => (
+        <div>
+          <div className="td-title">{v}</div>
+          <div className="td-title-desc">{task.description}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'stepCount',
+      title: '步骤数',
+      width: 70,
+      align: 'center',
+      render: (v) => <span className="font-mono text-xs">{v || 1}</span>,
+    },
+    {
+      key: 'priority',
+      title: '优先级',
+      width: 80,
+      sortable: true,
+      render: (_, task) => (
+        <span className="priority-badge">
+          <span className={`priority-dot ${priorityDotClass(task.priority)}`} />
+          {task.priorityLabel}
+        </span>
+      ),
+    },
+    {
+      key: 'assignee',
+      title: '负责人',
+      width: 100,
+      render: (v) => (
+        <div className="td-assignee">
+          <div className="assignee-avatar">{(v as string).charAt(0)}</div>
+          {v}
+        </div>
+      ),
+    },
+    {
+      key: 'due_date',
+      title: '截止日期',
+      width: 110,
+      sortable: true,
+      render: (v, task) => <span className={task.status === 'overdue' ? 'text-danger' : ''}>{v || '—'}</span>,
+    },
+    {
+      key: 'status',
+      title: '状态',
+      width: 80,
+      render: (_, task) => (
+        <span className={`badge-pill ${statusBadgeClass(task.status)}`}>
+          {task.statusLabel}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      title: '操作',
+      width: 150,
+      render: (_, task) => (
+        <div className="td-actions">
+          <button
+            onClick={() => navigate(`/task/${task.id}`)}
+            className="td-id"
+            style={{ fontSize: '12px' }}
+          >
+            处理
+          </button>
+          {task.status !== 'done' && (
+            <>
+              <span style={{ color: 'var(--color-border)', margin: '0 6px' }}>|</span>
+              <button
+                className="td-contract"
+                style={{ fontSize: '12px', color: 'var(--color-success)' }}
+                onClick={() => handleMarkComplete(task)}
+              >
+                标记完成
+              </button>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ]
+
+  const handleCategoryChange = (key: string) => {
+    setActiveCategory(key as BusinessType | 'all')
+    setFilterContract('all')
+    setCurrentPage(1)
   }
 
   if (!dataReady) {
@@ -319,38 +399,31 @@ export default function TaskListPage() {
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar */}
         <aside className="w-[240px] bg-surface border-r border-border flex flex-col flex-shrink-0 overflow-hidden">
           <div className="flex-1 overflow-y-auto overflow-x-hidden">
             <FilterGroup
               title="关联合同"
-              options={[{ value: 'all', label: '全部合同', count: allMockTasks.length }, ...contracts]}
+              options={[{ value: 'all', label: '全部合同', count: total }, ...contracts]}
               activeValue={filterContract}
               onChange={v => { setFilterContract(v); setCurrentPage(1) }}
               showSearch
               searchPlaceholder="搜索合同编号..."
             />
             <FilterGroup
-              title="任务类型"
-              options={[{ value: 'all', label: '全部类型', count: allMockTasks.length }, ...typeOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.type === o.value).length }))]}
-              activeValue={filterType}
-              onChange={v => { setFilterType(v as TaskType | 'all'); setCurrentPage(1) }}
-            />
-            <FilterGroup
               title="优先级"
-              options={[{ value: 'all', label: '全部优先级', count: allMockTasks.length }, ...priorityOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.priority === o.value).length }))]}
+              options={[{ value: 'all', label: '全部优先级', count: total }, ...priorityOptions.map(o => ({ ...o, count: tasks.filter(t => t.priority === o.value).length }))]}
               activeValue={filterPriority}
-              onChange={v => { setFilterPriority(v as Priority | 'all'); setCurrentPage(1) }}
+              onChange={v => { setFilterPriority(v as ExecutionPriority | 'all'); setCurrentPage(1) }}
             />
             <FilterGroup
               title="任务状态"
-              options={[{ value: 'all', label: '全部状态', count: allMockTasks.length }, ...statusOptions.map(o => ({ ...o, count: allMockTasks.filter(t => t.status === o.value).length }))]}
+              options={[{ value: 'all', label: '全部状态', count: total }, ...statusOptions.map(o => ({ ...o, count: tasks.filter(t => t.status === o.value).length }))]}
               activeValue={filterStatus}
-              onChange={v => { setFilterStatus(v as TaskStatus | 'all'); setCurrentPage(1) }}
+              onChange={v => { setFilterStatus(v as ExecutionTaskStatus | 'all'); setCurrentPage(1) }}
             />
             <FilterGroup
               title="负责人"
-              options={[{ value: 'all', label: '全部人员', count: allMockTasks.length }, ...assignees]}
+              options={[{ value: 'all', label: '全部人员', count: total }, ...assignees]}
               activeValue={filterAssignee}
               onChange={v => { setFilterAssignee(v); setCurrentPage(1) }}
               showSearch
@@ -359,9 +432,7 @@ export default function TaskListPage() {
           </div>
         </aside>
 
-        {/* Main Content */}
         <main className="flex-1 flex flex-col overflow-hidden bg-bg">
-          {/* Toolbar */}
           <div className="content-toolbar">
             <div className="content-toolbar-left">
               <div className="search-box">
@@ -392,11 +463,18 @@ export default function TaskListPage() {
               </div>
             </div>
             <div className="content-toolbar-right">
+              <button
+                className="btn btn-outline btn-sm inline-flex items-center gap-1"
+                onClick={handleMigrate}
+                disabled={migrating}
+              >
+                <RefreshCw size={12} className={migrating ? 'animate-spin' : ''} />
+                {migrating ? '迁移中' : '迁移旧任务'}
+              </button>
               <span className="page-btn" style={{ border: 'none', color: 'var(--color-muted)', fontSize: '11px', width: 'auto', cursor: 'default' }}>
-                共 <strong style={{ color: 'var(--color-fg)' }}>{totalCount}</strong> 条
+                共 <strong style={{ color: 'var(--color-fg)' }}>{total}</strong> 条
               </span>
               {hasOperation('update_todos') && <button className="btn btn-outline btn-sm">批量标记完成</button>}
-              {hasOperation('assign_todos') && <button className="btn btn-accent btn-sm">分配任务</button>}
               {hasOperation('export_orders') && <button className="btn btn-outline btn-sm" onClick={exportCSV}>导出</button>}
               <button
                 className="btn btn-ghost btn-sm"
@@ -407,14 +485,13 @@ export default function TaskListPage() {
             </div>
           </div>
 
-          {/* Stat Strip */}
           <div className="stat-strip">
             {statCards.map(card => (
               <button
                 key={card.key}
                 onClick={() => {
                   if (card.key === 'all') setFilterStatus('all')
-                  else setFilterStatus(card.key as TaskStatus)
+                  else setFilterStatus(card.key as ExecutionTaskStatus)
                   setCurrentPage(1)
                 }}
                 className="stat-card"
@@ -426,198 +503,29 @@ export default function TaskListPage() {
             ))}
           </div>
 
-          {/* Data Table */}
-          <div className="flex-1 overflow-auto">
-            <table className="task-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '36px', display: selectMode ? '' : 'none' }}>
-                    <input
-                      type="checkbox"
-                      checked={pageTasks.length > 0 && pageTasks.every(t => selectedTasks.has(t.id))}
-                      onChange={e => handleSelectAll(e.target.checked)}
-                    />
-                  </th>
-                  <th style={{ width: '24px' }}>#</th>
-                  <th
-                    onClick={() => handleSort('id')}
-                    className={`sortable ${sortField === 'id' ? sortDir : ''}`}
-                    style={{ width: '140px', minWidth: '130px' }}
-                  >
-                    任务编号 <span className="sort-arrow">{sortArrow('id')}</span>
-                  </th>
-                  <th style={{ width: '130px', minWidth: '120px' }}>关联合同</th>
-                  <th style={{ width: '90px' }}>任务类型</th>
-                  <th style={{ minWidth: '200px' }}>任务说明</th>
-                  <th
-                    onClick={() => handleSort('priority')}
-                    className={`sortable ${sortField === 'priority' ? sortDir : ''}`}
-                    style={{ width: '70px' }}
-                  >
-                    优先级 <span className="sort-arrow">{sortArrow('priority')}</span>
-                  </th>
-                  <th style={{ width: '100px' }}>负责人</th>
-                  <th
-                    onClick={() => handleSort('dueDate')}
-                    className={`sortable ${sortField === 'dueDate' ? sortDir : ''}`}
-                    style={{ width: '100px' }}
-                  >
-                    截止日期 <span className="sort-arrow">{sortArrow('dueDate')}</span>
-                  </th>
-                  <th style={{ width: '80px' }}>状态</th>
-                  <th style={{ width: '130px' }} className="col-sticky-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pageTasks.map((task, idx) => (
-                  <tr
-                    key={task.id}
-                    className={`${task.status === 'overdue' ? 'row-overdue' : ''} ${selectedTasks.has(task.id) ? 'selected' : ''}`}
-                  >
-                    <td style={{ display: selectMode ? '' : 'none' }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedTasks.has(task.id)}
-                        onChange={e => handleSelectTask(task.id, e.target.checked)}
-                      />
-                    </td>
-                    <td style={{ color: 'var(--color-muted)', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
-                      {String(startIdx + idx + 1).padStart(2, '0')}
-                    </td>
-                    <td>
-                      <button
-                        onClick={() => navigate(getDetailPath(task.type, task.id))}
-                        className="td-id"
-                      >
-                        {task.id}
-                      </button>
-                    </td>
-                    <td>
-                      <button
-                        onClick={() => { setFilterContract(task.contractId); setCurrentPage(1) }}
-                        className="td-contract"
-                      >
-                        {task.contractId}
-                      </button>
-                    </td>
-                    <td>
-                      <span className={`task-type-badge ${task.type}`}>
-                        {task.typeLabel}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="td-title">{task.title}</div>
-                      <div className="td-title-desc">{task.description}</div>
-                    </td>
-                    <td>
-                      <span className="priority-badge">
-                        <span className={`priority-dot ${priorityDotClass(task.priority)}`} />
-                        {task.priorityLabel}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="td-assignee">
-                        <div className="assignee-avatar">{task.assignee.charAt(0)}</div>
-                        {task.assignee}
-                      </div>
-                    </td>
-                    <td className={`td-date ${task.status === 'overdue' ? 'overdue' : ''}`}>
-                      {task.dueDate}
-                    </td>
-                    <td>
-                      <span className={`badge-pill ${statusBadgeClass(task.status)}`}>
-                        {task.statusLabel}
-                      </span>
-                    </td>
-                    <td className="col-sticky-right">
-                      <div className="td-actions">
-                        <button
-                          onClick={() => navigate(getDetailPath(task.type, task.id))}
-                          className="td-id"
-                          style={{ fontSize: '12px' }}
-                        >
-                          处理
-                        </button>
-                        {task.status !== 'done' && (
-                          <>
-                            <span style={{ color: 'var(--color-border)', margin: '0 6px' }}>|</span>
-                            <button
-                              className="td-contract"
-                              style={{ fontSize: '12px', color: 'var(--color-success)' }}
-                              onClick={() => handleMarkComplete(task)}
-                            >
-                              标记完成
-                            </button>
-                            {hasOperation('update_todos') && (
-                              <>
-                                <span style={{ color: 'var(--color-border)', margin: '0 6px' }}>|</span>
-                                <button
-                                  className="td-contract"
-                                  style={{ fontSize: '12px', ...(task.status === 'overdue' ? { color: 'var(--color-danger)' } : {}) }}
-                                >
-                                  {task.status === 'overdue' ? '催办' : '转交'}
-                                </button>
-                              </>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {pageTasks.length === 0 && (
-                  <tr>
-                    <td colSpan={selectMode ? 12 : 11} className="text-center text-muted text-sm" style={{ padding: '48px' }}>
-                      暂无符合条件的任务
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          <div className="pagination">
-            <div className="pagination-info">
-              显示 <span style={{ fontFamily: 'var(--font-mono)' }}>{totalCount > 0 ? startIdx + 1 : 0}</span>–<span style={{ fontFamily: 'var(--font-mono)' }}>{Math.min(startIdx + pageSize, totalCount)}</span> 条，共 <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{totalCount}</span> 条
-            </div>
-            <div className="pagination-controls">
-              <button
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={safePage <= 1}
-                className="page-btn"
-                style={safePage <= 1 ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
-              >
-                ‹
-              </button>
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                <button
-                  key={p}
-                  onClick={() => setCurrentPage(p)}
-                  className={`page-btn ${p === safePage ? 'active' : ''}`}
-                >
-                  {p}
-                </button>
-              ))}
-              <button
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={safePage >= totalPages}
-                className="page-btn"
-                style={safePage >= totalPages ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
-              >
-                ›
-              </button>
-              <div style={{ width: '8px' }} />
-              <select
-                value={pageSize}
-                onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
-                className="page-size-select"
-              >
-                <option value={20}>20/页</option>
-                <option value={50}>50/页</option>
-                <option value={100}>100/页</option>
-              </select>
-            </div>
+          <div className="flex-1 overflow-hidden">
+            <DataTable<ExecutionTask>
+              columns={columns}
+              data={filteredTasks}
+              rowKey="id"
+              selectable={selectMode}
+              selectedRowKeys={Array.from(selectedTasks)}
+              onSelectChange={(keys) => setSelectedTasks(new Set(keys))}
+              sort={{
+                field: sortField,
+                direction: sortDir,
+                onChange: handleSort,
+              }}
+              pagination={{
+                current: currentPage,
+                pageSize,
+                total,
+                onChange: (page, size) => {
+                  setCurrentPage(page)
+                  setPageSize(size)
+                },
+              }}
+            />
           </div>
         </main>
       </div>

@@ -23,13 +23,13 @@ interface LlmConfig {
 
 let cachedConfig: LlmConfig | null = null
 
-export const CONFIG_PATH = path.resolve(process.cwd(), 'llm.config.json')
+export const CONFIG_PATH = path.resolve(process.cwd(), '.claw/llm.config.json')
 
 function loadConfig(): LlmConfig {
   if (cachedConfig) return cachedConfig
 
   if (!fs.existsSync(CONFIG_PATH)) {
-    console.warn('[LlmConfig] llm.config.json not found, using empty config')
+    console.warn('[LlmConfig] .claw/llm.config.json not found, using empty config')
     cachedConfig = { providers: [], defaultModel: '' }
     return cachedConfig
   }

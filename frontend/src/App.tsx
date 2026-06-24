@@ -5,9 +5,7 @@ import HomePage from './pages/HomePage'
 import AnalysisResultPage from './pages/AnalysisResultPage'
 import HistoryAnalysisPage from './pages/HistoryAnalysisPage'
 import TaskListPage from './pages/TaskListPage'
-import TaskAgentPage from './pages/TaskAgentPage'
-import TaskDecisionPage from './pages/TaskDecisionPage'
-import TaskManualPage from './pages/TaskManualPage'
+import ExecutionTaskPage from './pages/ExecutionTaskPage'
 import SettingsPage from './pages/SettingsPage'
 import A2uiPage from './pages/A2uiPage'
 import LoginPage from './pages/LoginPage'
@@ -59,9 +57,7 @@ const router = createBrowserRouter(
         <Route path="/analysis/:taskId?" element={<AnalysisResultPage />} />
         <Route path="/history" element={<HistoryAnalysisPage />} />
         <Route path="/tasks" element={<TaskListPage />} />
-        <Route path="/task/agent/:id" element={<TaskAgentPage />} />
-        <Route path="/task/decision/:id" element={<TaskDecisionPage />} />
-        <Route path="/task/manual/:id" element={<TaskManualPage />} />
+        <Route path="/task/:id" element={<ExecutionTaskPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/a2ui" element={<A2uiPage />} />
       </Route>

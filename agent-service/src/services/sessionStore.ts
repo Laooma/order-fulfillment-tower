@@ -4,7 +4,7 @@ import os from 'os'
 import fs from 'fs'
 import type { Session, CompactionConfig, CompactionResult, TodoItem } from '../types'
 
-const DB_PATH = process.env.AGENT_DB_PATH || path.join(process.cwd(), 'data', 'agent-sessions.db')
+const DB_PATH = process.env.AGENT_DB_PATH || path.join(process.cwd(), '.claw/data', 'agent-sessions.db')
 
 const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   preserveRecentMessages: parseInt(process.env.COMPACTION_PRESERVE_RECENT || '4', 10),

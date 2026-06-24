@@ -41,7 +41,6 @@ function touchSession(userId: string) {
   const s = sessions.get(userId)
   if (s) s.lastActiveAt = Date.now()
 }
-}
 
 // ── Intent recognition (same algorithm as agentLoop.ts) ──
 

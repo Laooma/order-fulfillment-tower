@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import type { Plugin } from '../types'
 
-const PLUGINS_DIR = process.env.PLUGINS_DIR || path.resolve(process.cwd(), '../.claw/plugins')
+const PLUGINS_DIR = process.env.PLUGINS_DIR || path.resolve(process.cwd(), '.claw/plugins')
 
 export interface PluginMeta {
   id: string

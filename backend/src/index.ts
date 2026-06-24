@@ -9,6 +9,7 @@ import ordersRouter from './routes/orders'
 import cabinetPackagesRouter from './routes/cabinet-packages'
 import bizContractsRouter from './routes/biz-contracts'
 import tasksRouter from './routes/tasks'
+import executionTasksRouter from './routes/executionTasks'
 import analysisRouter from './routes/analysis'
 import clawRouter from './routes/claw'
 import rbacRouter from './routes/rbac'
@@ -52,6 +53,7 @@ app.use('/api/orders', ordersRouter)
 app.use('/api/cabinet-packages', cabinetPackagesRouter)
 app.use('/api/biz-contracts', bizContractsRouter)
 app.use('/api/tasks', tasksRouter)
+app.use('/api/execution-tasks', executionTasksRouter)
 app.use('/api/analysis', analysisRouter)
 app.use('/api/claw', clawRouter)
 app.use('/api', rbacRouter)
