@@ -36,7 +36,7 @@ export default function ExecutionTaskPage() {
   const [dailyBalance, setDailyBalance] = useState<Record<string, any[]>>({})
 
   const currentUser = useAuthStore((s) => s.user)
-  const currentUserName = currentUser?.display_name || ''
+  const currentUserName = currentUser?.displayName || ''
   const sendMessage = useChatStore((s) => s.sendMessage)
   const setPageConfig = useChatStore((s) => s.setPageConfig)
   const a2uiStore = useA2uiStore()
