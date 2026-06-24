@@ -220,11 +220,6 @@ export default function ExecutionTaskPage() {
         </div>
       )}
 
-      {/* Description */}
-      {task.description && (
-        <div className="text-sm text-fg leading-relaxed px-1 mb-4">{task.description}</div>
-      )}
-
       {/* Timeline */}
       <ExecutionTimeline
         steps={task.steps || []}

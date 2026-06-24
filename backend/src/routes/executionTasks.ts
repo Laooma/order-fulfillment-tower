@@ -275,14 +275,14 @@ router.post('/steps/:id/options', (req, res) => {
 // PUT /api/execution-steps/:stepId/decide
 router.put('/steps/:stepId/decide', (req, res) => {
   try {
-    const { optionId, comment, handler } = req.body
+    const { optionId, comment, handler, resultData } = req.body
     selectDecisionOption(req.params.stepId, optionId)
     const now = new Date().toLocaleString('zh-CN')
     const step = updateExecutionStep(req.params.stepId, {
       status: 'done',
       completedAt: now,
       handler: handler || '',
-      resultData: { decisionOptionId: optionId, comment },
+      resultData: { decisionOptionId: optionId, comment, ...(resultData || {}) },
     })
     if (!step) {
       res.status(404).json({ error: 'Step not found' })
