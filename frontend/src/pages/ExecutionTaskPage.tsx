@@ -147,14 +147,9 @@ export default function ExecutionTaskPage() {
   const taskInfo = useMemo(() => {
     if (!task) return null
     return {
-      id: task.id,
-      typeLabel: '执行任务',
-      assignee: task.assignee,
-      supervisor: task.supervisor,
-      priorityLabel: task.priorityLabel,
-      statusLabel: task.statusLabel,
+      ...task,
+      contractId: task.contract_number,
       dueDate: task.due_date,
-      description: task.description,
     }
   }, [task])
 

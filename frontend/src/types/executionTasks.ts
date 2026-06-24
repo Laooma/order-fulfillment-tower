@@ -24,6 +24,19 @@ export interface ExecutionTask {
   categoryLabel?: string
   stepCount?: number
   steps?: ExecutionStep[]
+  // Meta panel display fields
+  contract_amount?: string
+  order_date?: string
+  delivery_days?: string
+  salesperson?: string
+  purchaser?: string
+  shipment_ratio?: string
+  receipt_ratio?: string
+  product_model?: string
+  material_code?: string
+  sku_count?: string
+  ship_method?: string
+  company_name?: string
 }
 
 export interface ExecutionStep {

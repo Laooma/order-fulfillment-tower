@@ -1,15 +1,15 @@
 import type { MetaPanelConfig } from '../types/metaConfig'
 
 /**
- * Default meta panel config — reproduces the hardcoded layout
- * previously in TaskDetailLayout's left sidebar.
+ * Default meta panel config for execution task detail page.
  *
- * Fields with `dataKey` are resolved from the fetched task data.
- * Fields with only `static` are currently hardcoded (non-API fields).
+ * All field values are resolved dynamically from the task data object.
+ * Fields with `dataKey` are looked up from the enriched task object.
+ * `static` serves only as fallback when data is missing.
  */
 export const defaultMetaConfig: MetaPanelConfig = {
   contractIdDataKey: 'contractId',
-  companyName: '中国铁制股份有限公司 · 华北大区 / 安徽',
+  companyName: '',
   statusBadges: [
     { label: '异常', className: 'danger' },
     { label: '紧急', className: 'warn' },
@@ -20,8 +20,6 @@ export const defaultMetaConfig: MetaPanelConfig = {
       rows: [
         { label: '任务编号', value: { dataKey: 'id', mono: true, fontSize: 11 } },
         { label: '关联分析', value: { dataKey: 'analysisTaskId', mono: true } },
-        { label: '任务类型', value: { dataKey: 'typeLabel' } },
-        { label: '相关skill', value: { dataKey: 'skillName', static: '无skill' } },
         { label: '优先级', value: { dataKey: 'priorityLabel' } },
         { label: '状态', value: { dataKey: 'statusLabel' } },
         { label: '截止日期', value: { dataKey: 'dueDate', mono: true } },
@@ -33,27 +31,27 @@ export const defaultMetaConfig: MetaPanelConfig = {
     {
       title: '基本信息',
       rows: [
-        { label: '合同金额', value: { static: '1,558.00 万元', mono: true } },
-        { label: '下单日期', value: { static: '2024/11/14' } },
-        { label: '交货期', value: { static: '47 天' } },
-        { label: '销售员', value: { static: '李明' } },
-        { label: '采购员', value: { static: '王芳' } },
+        { label: '合同金额', value: { dataKey: 'contract_amount', mono: true } },
+        { label: '下单日期', value: { dataKey: 'order_date' } },
+        { label: '交货期', value: { dataKey: 'delivery_days' } },
+        { label: '销售员', value: { dataKey: 'salesperson' } },
+        { label: '采购员', value: { dataKey: 'purchaser' } },
       ],
     },
     {
       title: '履约进度',
       rows: [
-        { label: '发货比例', value: { static: '65%', mono: true }, progressValue: 65 },
-        { label: '签收比例', value: { static: '32%', mono: true }, progressValue: 32 },
+        { label: '发货比例', value: { dataKey: 'shipment_ratio', mono: true }, progressValue: 0 },
+        { label: '签收比例', value: { dataKey: 'receipt_ratio', mono: true }, progressValue: 0 },
       ],
     },
     {
       title: '产品信息',
       rows: [
-        { label: '产品型号', value: { static: 'CCU-2000' } },
-        { label: '物料编号', value: { static: 'HT001241', mono: true } },
-        { label: 'SKU 数量', value: { static: '6', mono: true } },
-        { label: '发货方式', value: { static: '直发客户' } },
+        { label: '产品型号', value: { dataKey: 'product_model' } },
+        { label: '物料编号', value: { dataKey: 'material_code', mono: true } },
+        { label: 'SKU 数量', value: { dataKey: 'sku_count', mono: true } },
+        { label: '发货方式', value: { dataKey: 'ship_method' } },
       ],
     },
   ],

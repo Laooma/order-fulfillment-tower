@@ -630,6 +630,20 @@ function initSchema(db: Database.Database) {
     `)
   } catch (_) { /* migration already applied */ }
 
+  // Migration: add meta panel display columns to execution_tasks
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN contract_amount TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN order_date TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN delivery_days TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN salesperson TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN purchaser TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN shipment_ratio TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN receipt_ratio TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN product_model TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN material_code TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN sku_count TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN ship_method TEXT DEFAULT \'\'') } catch (_) {}
+  try { db.exec('ALTER TABLE execution_tasks ADD COLUMN company_name TEXT DEFAULT \'\'') } catch (_) {}
+
   seedRbac(db)
 }
 
@@ -1327,6 +1341,10 @@ export function updateExecutionTask(id: string, data: Partial<ExecutionTaskInput
     status: 'status', assignee: 'assignee', supervisor: 'supervisor', dueDate: 'due_date',
     sourceAnalysisTaskId: 'source_analysis_task_id', orderId: 'order_id', contractNumber: 'contract_number',
     createdBy: 'created_by',
+    contractAmount: 'contract_amount', orderDate: 'order_date', deliveryDays: 'delivery_days',
+    salesperson: 'salesperson', purchaser: 'purchaser', shipmentRatio: 'shipment_ratio',
+    receiptRatio: 'receipt_ratio', productModel: 'product_model', materialCode: 'material_code',
+    skuCount: 'sku_count', shipMethod: 'ship_method', companyName: 'company_name',
   }
   for (const [key, col] of Object.entries(fieldMap)) {
     if ((data as any)[key] !== undefined) {
