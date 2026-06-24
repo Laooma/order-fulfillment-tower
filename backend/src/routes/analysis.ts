@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { mockAnalysisTasks } from '../services/mockData'
-import { getDb, getAnalysisFull, saveAnalysisResult, saveA2uiData, getCardDetail, saveCardDetail, updateTaskStatus, getTaskStatus } from '../services/database'
+import { getDb, getAnalysisFull, saveAnalysisResult, saveA2uiData, getCardDetail, saveCardDetail, updateTaskStatus, getTaskStatus, updateProblemCardStatus } from '../services/database'
 import { requireOperation } from '../middleware/auth'
 
 const router = Router()
@@ -324,6 +324,26 @@ router.post('/:id/todos', (req, res) => {
     res.json({ success: true, count })
   } catch (err: any) {
     console.error('[Analysis] Save todos error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT /api/analysis/problems/:problemId/status — update a problem card's status
+router.put('/problems/:problemId/status', (req, res) => {
+  try {
+    const { status } = req.body
+    if (!status) {
+      res.status(400).json({ error: 'status is required' })
+      return
+    }
+    const ok = updateProblemCardStatus(req.params.problemId, status)
+    if (!ok) {
+      res.status(404).json({ error: 'Problem card not found' })
+      return
+    }
+    res.json({ success: true })
+  } catch (err: any) {
+    console.error('[Analysis] Update problem status error:', err)
     res.status(500).json({ error: err.message })
   }
 })

@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom'
 import { getAnalysisTaskId, cn } from '../lib/utils'
-import { useChatStore } from '../stores/chatStore'
 import type { MetaPanelConfig } from '../types/metaConfig'
 import { defaultMetaConfig } from '../configs/taskMetaConfigs'
 
@@ -23,22 +22,18 @@ interface TaskDetailLayoutProps {
   task?: TaskInfo | null
   metaConfig?: MetaPanelConfig
   onHandover?: () => void
+  onMarkComplete?: () => void
+  verificationState?: 'idle' | 'submitted' | 'verifying'
   summary?: React.ReactNode
 }
 
-export default function TaskDetailLayout({ title, children, taskId, contractId, task, metaConfig, onHandover, summary }: TaskDetailLayoutProps) {
+export default function TaskDetailLayout({ title, children, taskId, contractId, task, metaConfig, onHandover, onMarkComplete, verificationState, summary }: TaskDetailLayoutProps) {
   const navigate = useNavigate()
-  const sendMessage = useChatStore((s) => s.sendMessage)
   const analysisTaskId = taskId ? getAnalysisTaskId(taskId) : ''
   const config = metaConfig || defaultMetaConfig
 
   const isDone = task?.statusLabel === '已完成' || (task as any)?.status === 'done'
-
-  const handleMarkComplete = () => {
-    if (!sendMessage || !taskId) return
-    const taskTitle = task?.title || title || ''
-    sendMessage(`请使用 mark_task_complete 工具验证任务 ${taskId}（${taskTitle}）是否真正完成，验证后发送飞书通知`)
-  }
+  const isVerifyingState = verificationState === 'verifying' || verificationState === 'submitted'
 
   // Merge computed fields into the task-like lookup object
   const enriched: Record<string, any> = { ...(task || {}), analysisTaskId }
@@ -57,10 +52,24 @@ export default function TaskDetailLayout({ title, children, taskId, contractId, 
           <div className="detail-header-actions">
             {isDone ? (
               <span className="detail-done-badge">✓ 已完成</span>
+            ) : isVerifyingState ? (
+              <>
+                <button className="btn btn-outline" onClick={onHandover}>转交</button>
+                <button className="btn btn-accent" disabled style={{ opacity: 0.7 }}>
+                  {verificationState === 'verifying' ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span className="thinking-dot" />
+                      校验中...
+                    </span>
+                  ) : (
+                    '已提交，等待校验'
+                  )}
+                </button>
+              </>
             ) : (
               <>
                 <button className="btn btn-outline" onClick={onHandover}>转交</button>
-                <button className="btn btn-accent" onClick={handleMarkComplete}>标记完成</button>
+                <button className="btn btn-accent" onClick={onMarkComplete}>标记完成</button>
               </>
             )}
           </div>

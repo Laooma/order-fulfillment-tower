@@ -358,16 +358,16 @@ async function handleMarkTaskComplete(args: Record<string, unknown>, ws: WebSock
 
   try {
     // Step 1: GET task data without marking complete
-    const getRes = await fetch(`${BACKEND_API}/tasks/${encodeURIComponent(taskId)}`)
+    const getRes = await fetch(`${BACKEND_API}/execution-tasks/${encodeURIComponent(taskId)}`)
     if (!getRes.ok) {
       return `Error: Failed to fetch task — ${getRes.statusText}`
     }
     const taskData = await getRes.json() as any
-    const analysisTaskId = taskData.analysisTaskId || ''
+    const analysisTaskId = taskData.source_analysis_task_id || ''
 
     // Step 2: Extract material codes from task description and fetch LIVE stock data
     const taskDescription = taskData.description || taskData.title || ''
-    const taskContractId = taskData.contractId || ''
+    const taskContractId = taskData.contract_number || ''
     const materialCodeRegex = /\b([A-Z]{2,4}-\d{3,4}[A-Za-z]?|[A-Z]{2}\d{6}|[A-Z]+-\d{2,4}-[A-Za-z]?)\b/g
     const materialCodes = [...new Set(
       (taskDescription.match(materialCodeRegex) || [])
@@ -414,6 +414,14 @@ async function handleMarkTaskComplete(args: Record<string, unknown>, ws: WebSock
       const shortageDetails = liveShortages
         .map(s => `${s.materialCode}: 缺口${s.shortageQty}个 (库存${s.currentStock}/需求${s.requiredQty})`)
         .join(', ')
+      // Send verification_result to frontend via WebSocket
+      send(ws, {
+        type: 'verification_result',
+        sessionId,
+        taskId,
+        verified: false,
+        verificationNote: `未完成。合同${taskContractId}的实时库存数据显示物料仍有缺口: ${shortageDetails}`,
+      })
       return JSON.stringify({
         taskId,
         analysisTaskId,
@@ -521,6 +529,14 @@ ${analysisContext ? `\n分析快照数据（问题发现时记录，仅供参考
 
     // Step 5: If verification FAILS, block the operation
     if (!verificationPassed) {
+      // Send verification_result to frontend via WebSocket
+      send(ws, {
+        type: 'verification_result',
+        sessionId,
+        taskId,
+        verified: false,
+        verificationNote,
+      })
       return JSON.stringify({
         taskId,
         analysisTaskId,
@@ -531,11 +547,11 @@ ${analysisContext ? `\n分析快照数据（问题发现时记录，仅供参考
       }, null, 2)
     }
 
-    // Step 6: Verification PASSED — call mark-complete API
-    const markRes = await fetch(`${BACKEND_API}/tasks/${encodeURIComponent(taskId)}/mark-complete`, {
+    // Step 6: Verification PASSED — mark task as done via PUT /api/execution-tasks/:id
+    const markRes = await fetch(`${BACKEND_API}/execution-tasks/${encodeURIComponent(taskId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assigneeNote }),
+      body: JSON.stringify({ status: 'done', completedAt: new Date().toLocaleString('zh-CN'), assigneeNote }),
     })
 
     if (!markRes.ok) {
@@ -548,7 +564,93 @@ ${analysisContext ? `\n分析快照数据（问题发现时记录，仅供参考
       return `Error: ${taskInfo.error || 'Unknown error'}`
     }
 
-    // Step 7: Fetch remaining tasks for the same analysis, then send Feishu notification
+    // Step 6.5: Create follow-up execution steps if the verification note indicates remaining work
+    let newStepsCreated = 0
+    let cardsUpdated = 0
+    const followUpActions = extractFollowUpSteps(verificationNote, taskData)
+
+    if (followUpActions.length > 0 && analysisTaskId) {
+      // Find the corresponding execution task by source_analysis_task_id
+      try {
+        const execTasksRes = await fetch(`${BACKEND_API}/execution-tasks?page=1&pageSize=100`)
+        if (execTasksRes.ok) {
+          const execTasksData = await execTasksRes.json()
+          const matchingExecTask = (execTasksData.data || []).find(
+            (et: any) => et.source_analysis_task_id === analysisTaskId
+          )
+          const execTaskId = matchingExecTask?.id
+
+          if (execTaskId) {
+            // Get current step count for ordering
+            const existingStepsRes = await fetch(`${BACKEND_API}/execution-tasks/${encodeURIComponent(execTaskId)}/steps`)
+            let stepOrder = 1
+            if (existingStepsRes.ok) {
+              const stepsData = await existingStepsRes.json()
+              stepOrder = (stepsData.data || []).length + 1
+            }
+
+            // Create follow-up steps
+            for (const action of followUpActions) {
+              try {
+                const createRes = await fetch(`${BACKEND_API}/execution-tasks/${encodeURIComponent(execTaskId)}/steps`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    stepOrder: stepOrder++,
+                    stepType: action.stepType,
+                    title: action.title,
+                    description: action.description,
+                    status: 'pending',
+                    assignee: taskData.assignee || '',
+                  }),
+                })
+                if (createRes.ok) newStepsCreated++
+              } catch { /* skip failed steps */ }
+            }
+          }
+        }
+      } catch { /* follow-up step creation optional */ }
+
+      // Update problem card statuses for cards related to this task's materials
+      if (materialCodes.length > 0) {
+        try {
+          const analysisFullRes = await fetch(`${BACKEND_API}/analysis/${encodeURIComponent(analysisTaskId)}/full`)
+          if (analysisFullRes.ok) {
+            const analysisData = await analysisFullRes.json()
+            for (const order of analysisData.orders || []) {
+              for (const cat of order.problemCategories || []) {
+                for (const card of cat.cards || []) {
+                  if (materialCodes.includes(card.material_code)) {
+                    try {
+                      const updateRes = await fetch(
+                        `${BACKEND_API}/analysis/problems/${encodeURIComponent(card.id || card.problemId)}/status`,
+                        {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ status: '已解决' }),
+                        }
+                      )
+                      if (updateRes.ok) cardsUpdated++
+                    } catch { /* skip failed card updates */ }
+                  }
+                }
+              }
+            }
+          }
+        } catch { /* card status update optional */ }
+      }
+    }
+
+    // Step 7: Send verification_result to frontend via WebSocket
+    send(ws, {
+      type: 'verification_result',
+      sessionId,
+      taskId,
+      verified: true,
+      verificationNote,
+    })
+
+    // Step 8: Fetch remaining tasks for the same analysis, then send Feishu notification
     const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
     const allContractNums = taskInfo.contractNumbers || contractNumbers
 
@@ -580,6 +682,14 @@ ${analysisContext ? `\n分析快照数据（问题发现时记录，仅供参考
     notificationLines.push('')
     notificationLines.push(`关联合同：${(allContractNums || []).join(', ')}`)
     notificationLines.push(`任务编号：${taskId}`)
+
+    if (newStepsCreated > 0) {
+      notificationLines.push('')
+      notificationLines.push(`🆕 已自动创建 ${newStepsCreated} 个后续执行步骤`)
+    }
+    if (cardsUpdated > 0) {
+      notificationLines.push(`📋 已更新 ${cardsUpdated} 个问题卡片状态为"已解决"`)
+    }
 
     if (remainingTasks.length > 0) {
       const pendingCount = remainingTasks.filter((t: any) => t.status === 'pending').length
@@ -629,7 +739,7 @@ ${analysisContext ? `\n分析快照数据（问题发现时记录，仅供参考
       console.error('[AgentLoop] Feishu notification failed:', err.message)
     }
 
-    // Step 8: Send todo_suggestion for next-step follow-ups
+    // Step 9: Send todo_suggestion for next-step follow-ups
     const suggestedTodos = extractSuggestedTodos(verificationNote, taskData, allContractNums)
     if (suggestedTodos.length > 0) {
       send(ws, {
@@ -640,15 +750,17 @@ ${analysisContext ? `\n分析快照数据（问题发现时记录，仅供参考
       })
     }
 
-    // Step 9: Return success result
+    // Step 10: Return success result
     return JSON.stringify({
       taskId,
       analysisTaskId,
       status: 'done',
       verified: true,
       verificationNote,
+      newStepsCreated,
+      cardsUpdated,
       deepLink,
-      message: `任务已标记完成。验证结论: ${verificationNote}。飞书通知已发送，深度链接: ${deepLink}`,
+      message: `任务已标记完成。验证结论: ${verificationNote}。${newStepsCreated > 0 ? `已创建 ${newStepsCreated} 个后续步骤。` : ''}${cardsUpdated > 0 ? `已更新 ${cardsUpdated} 个问题卡片。` : ''}飞书通知已发送，深度链接: ${deepLink}`,
     }, null, 2)
   } catch (err: any) {
     return `Error in mark_task_complete: ${err.message}`
@@ -685,6 +797,56 @@ function extractSuggestedTodos(verificationNote: string, taskData: any, contract
   }
 
   return todos
+}
+
+// Extract follow-up execution steps from the verification note.
+// When the LLM determines the task is "已完成" but mentions subsequent actions,
+// create new execution steps for the same assignee so work continues automatically.
+interface FollowUpStep {
+  stepType: string  // 'manual' | 'decision' | 'agent'
+  title: string
+  description: string
+}
+
+function extractFollowUpSteps(verificationNote: string, taskData: any): FollowUpStep[] {
+  const steps: FollowUpStep[] = []
+  const taskTitle = taskData.title || taskData.description || ''
+
+  // Keyword → step mapping
+  const stepPatterns: Array<{ keywords: string[]; stepType: string; actionName: string }> = [
+    { keywords: ['采购', '加急', '补货', '下单'], stepType: 'manual', actionName: '采购/补货' },
+    { keywords: ['调拨', '调配', '转库'], stepType: 'manual', actionName: '库存调拨' },
+    { keywords: ['催货', '催交', '跟催'], stepType: 'manual', actionName: '催货跟进' },
+    { keywords: ['发货', '出库', '发运'], stepType: 'manual', actionName: '发货执行' },
+    { keywords: ['验收', '签收', '收货', '入库'], stepType: 'manual', actionName: '验收/签收' },
+    { keywords: ['确认', '审批', '核准'], stepType: 'decision', actionName: '确认/审批' },
+    { keywords: ['联系', '沟通', '协调'], stepType: 'manual', actionName: '沟通协调' },
+    { keywords: ['生产', '排产', '加工'], stepType: 'manual', actionName: '生产追踪' },
+  ]
+
+  for (const pattern of stepPatterns) {
+    if (pattern.keywords.some(kw => verificationNote.includes(kw))) {
+      // Only create ONE follow-up step to avoid flooding
+      const descPrefix = verificationNote.slice(0, 100).replace(/已完成[，。]?/, '')
+      steps.push({
+        stepType: pattern.stepType,
+        title: `[跟进] ${pattern.actionName} — ${taskTitle.slice(0, 30)}`,
+        description: `根据校验结论：${descPrefix}。请执行${pattern.actionName}相关操作。`,
+      })
+      break
+    }
+  }
+
+  // If no specific keyword matched but verification note suggests follow-up (e.g., "但需关注")
+  if (steps.length === 0 && (verificationNote.includes('关注') || verificationNote.includes('监控'))) {
+    steps.push({
+      stepType: 'manual',
+      title: `[跟进] 持续关注 — ${taskTitle.slice(0, 30)}`,
+      description: `校验通过但建议持续关注：${verificationNote.slice(0, 100)}`,
+    })
+  }
+
+  return steps
 }
 
 async function handleFetchOrders(args: Record<string, unknown>): Promise<string> {

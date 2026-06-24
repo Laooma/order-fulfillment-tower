@@ -38,8 +38,12 @@ export default function ExecutionTaskPage() {
   const currentUser = useAuthStore((s) => s.user)
   const currentUserName = currentUser?.displayName || ''
   const sendMessage = useChatStore((s) => s.sendMessage)
+  const verificationResult = useChatStore((s) => s.verificationResult)
+  const setVerificationResult = useChatStore((s) => s.setVerificationResult)
   const setPageConfig = useChatStore((s) => s.setPageConfig)
   const a2uiStore = useA2uiStore()
+
+  const [verificationState, setVerificationState] = useState<'idle' | 'submitted' | 'verifying'>('idle')
 
   const loadTask = async () => {
     if (!id) return
@@ -49,6 +53,14 @@ export default function ExecutionTaskPage() {
       const pending = data.steps?.find((s: ExecutionStep) => s.status !== 'done') || data.steps?.[data.steps.length - 1]
       setCurrentStep(pending || null)
 
+      // Sync header verification state with persisted step data
+      const rd = (pending?.resultData as any)
+      if (pending?.step_type === 'decision' && rd?.submitted) {
+        setVerificationState('submitted')
+      } else {
+        setVerificationState('idle')
+      }
+
       // Load handover records
       api.executionTasks.handovers(id).then((res) => setHandoverRecords(res.data)).catch(() => {})
 
@@ -56,6 +68,8 @@ export default function ExecutionTaskPage() {
       if (data.contract_number) {
         loadOrderMaterials(data.contract_number)
       }
+
+      return { task: data, pendingStep: pending }
     } catch (err) {
       console.error('Load execution task error:', err)
     } finally {
@@ -103,10 +117,42 @@ export default function ExecutionTaskPage() {
 
   const isDone = task?.status === 'done'
 
+  // Unified mark-complete handler — used by both Header and CurrentStepPanel
   const handleMarkComplete = () => {
     if (!sendMessage || !id) return
-    sendMessage(`请使用 mark_task_complete 工具验证执行任务 ${id}（${task?.title}）是否真正完成，验证后发送飞书通知`)
+    setVerificationState('verifying')
+    sendMessage(
+      `请使用 mark_task_complete 工具验证执行任务 ${id}（${task?.title}）。` +
+      `请检查该决策是否正确执行，物料库存是否满足条件，验证后标记任务完成。`
+    )
   }
+
+  // Listen for verification results from the agent via WebSocket
+  useEffect(() => {
+    if (verificationResult && verificationResult.taskId === id) {
+      // loadTask() is async and sets verificationState based on persisted data,
+      // so we must await it before applying the verification result state to avoid a race.
+      const vr = verificationResult
+      setVerificationResult(null)
+      loadTask().then((result) => {
+        if (!vr.verified) {
+          setVerificationState('idle')
+          // Clear the persisted 'submitted' flag so CurrentStepPanel
+          // shows the decision form again (not the "已提交" display).
+          const step = result?.pendingStep
+          if (step?.id && step?.step_type === 'decision') {
+            const rd = (step.resultData || {}) as Record<string, unknown>
+            if (rd.submitted) {
+              const { submitted, ...rest } = rd
+              api.executionTasks.updateStep(step.id, { resultData: rest })
+                .then(() => loadTask())
+                .catch(() => {})
+            }
+          }
+        }
+      })
+    }
+  }, [verificationResult, id])
 
   const handleStepUpdated = () => {
     loadTask()
@@ -209,6 +255,8 @@ export default function ExecutionTaskPage() {
       contractId={task.contract_number}
       task={taskInfo}
       onHandover={() => setShowHandover(true)}
+      onMarkComplete={handleMarkComplete}
+      verificationState={verificationState}
       summary={summaryNode}
     >
       {/* Done overlay */}
@@ -234,6 +282,7 @@ export default function ExecutionTaskPage() {
           step={currentStep}
           currentUserName={currentUserName}
           onStepUpdated={handleStepUpdated}
+          onVerificationStateChange={setVerificationState}
         />
       )}
 

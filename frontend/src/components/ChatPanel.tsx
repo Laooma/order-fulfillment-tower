@@ -417,6 +417,15 @@ const ChatPanel = forwardRef<ChatPanelHandle>(function ChatPanel(_props, ref) {
           return next
         })
       }
+      if (msg.type === 'verification_result') {
+        lastActivityRef.current = Date.now()
+        const vr = msg as any
+        useChatStore.getState().setVerificationResult({
+          taskId: vr.taskId || '',
+          verified: vr.verified === true,
+          verificationNote: vr.verificationNote || '',
+        })
+      }
       if (msg.type === 'todo_suggestion' && msg.suggestedTodos && msg.suggestedTodos.length > 0) {
         setPendingTodoSuggestion({
           todos: msg.suggestedTodos,

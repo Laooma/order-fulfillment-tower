@@ -999,6 +999,13 @@ export function saveCardDetail(problemId: string, detail: {
   return { success: true }
 }
 
+// Update a problem card's status in analysis_problems
+export function updateProblemCardStatus(problemId: string, status: string): boolean {
+  const d = getDb()
+  const result = d.prepare('UPDATE analysis_problems SET status = ? WHERE id = ?').run(status, problemId)
+  return result.changes > 0
+}
+
 // ── Chat message helpers ──
 
 interface ChatMessageRow {
@@ -1213,6 +1220,7 @@ export interface ExecutionTaskInput {
   orderId?: string
   contractNumber?: string
   createdBy?: string
+  completedAt?: string
 }
 
 export interface ExecutionStepInput {
@@ -1345,6 +1353,7 @@ export function updateExecutionTask(id: string, data: Partial<ExecutionTaskInput
     salesperson: 'salesperson', purchaser: 'purchaser', shipmentRatio: 'shipment_ratio',
     receiptRatio: 'receipt_ratio', productModel: 'product_model', materialCode: 'material_code',
     skuCount: 'sku_count', shipMethod: 'ship_method', companyName: 'company_name',
+    completedAt: 'completed_at',
   }
   for (const [key, col] of Object.entries(fieldMap)) {
     if ((data as any)[key] !== undefined) {

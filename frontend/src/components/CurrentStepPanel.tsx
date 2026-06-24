@@ -10,6 +10,7 @@ interface CurrentStepPanelProps {
   step: ExecutionStep
   currentUserName?: string
   onStepUpdated?: () => void
+  onVerificationStateChange?: (state: 'idle' | 'submitted' | 'verifying') => void
 }
 
 const typeIcons: Record<string, React.ReactNode> = {
@@ -24,7 +25,7 @@ const typeLabels: Record<string, string> = {
   decision: '决策步骤',
 }
 
-export default function CurrentStepPanel({ task, step, currentUserName, onStepUpdated }: CurrentStepPanelProps) {
+export default function CurrentStepPanel({ task, step, currentUserName, onStepUpdated, onVerificationStateChange }: CurrentStepPanelProps) {
   const [options, setOptions] = useState<DecisionOption[]>([])
   const [selectedOption, setSelectedOption] = useState('')
   const [comment, setComment] = useState('')
@@ -51,15 +52,20 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
         if (preselected) setSelectedOption(preselected.id)
       }).catch(() => {})
     }
-    // Check if already submitted (e.g. page refresh after submit)
+    // Check if already submitted (e.g. page refresh after submit),
+    // and also detect when submitted flag is cleared (verification failed)
     const rd = step.resultData as any
     if (rd?.submitted) {
       setSubmitted(true)
       setSelectedOption(rd.decisionOptionId || '')
       setComment(rd.comment || '')
       setNotes(rd.notes || '')
+    } else {
+      setSubmitted(false)
+      setVerifying(false)
+      setResultMessage('')
     }
-  }, [step.id, step.step_type])
+  }, [step.id, step.step_type, step.resultData])
 
   const handleCompleteManual = async () => {
     if (!canOperate) return
@@ -138,6 +144,7 @@ export default function CurrentStepPanel({ task, step, currentUserName, onStepUp
 
         // Phase 2: Trigger verification via AI chat
         setVerifying(true)
+        onVerificationStateChange?.('verifying')
         const decisionLabel = chosen?.title || selectedOption
         if (sendMessage) {
           sendMessage(

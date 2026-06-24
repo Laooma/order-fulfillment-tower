@@ -107,6 +107,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!user) return false
     // Admin can use all skills
     if (user.roles.includes('role_admin')) return true
+    // Users with use_skills operation can use all skills (no per-skill restriction)
+    if (user.permissions.operations.includes('use_skills')) return true
+    // Fallback: explicit per-skill permission check
     return user.permissions.skills.includes(skillId)
   },
 

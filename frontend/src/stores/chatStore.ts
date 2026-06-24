@@ -34,6 +34,9 @@ interface ChatStore {
 
   sendMessage: ((message: string, opts?: { taskId?: string; orders?: string[]; cabinetPackages?: string[] }) => void) | null
   setSendMessage: (fn: ((message: string, opts?: { taskId?: string; orders?: string[]; cabinetPackages?: string[] }) => void) | null) => void
+
+  verificationResult: { taskId: string; verified: boolean; verificationNote: string } | null
+  setVerificationResult: (r: { taskId: string; verified: boolean; verificationNote: string } | null) => void
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -50,4 +53,7 @@ export const useChatStore = create<ChatStore>((set) => ({
 
   sendMessage: null,
   setSendMessage: (sendMessage) => set({ sendMessage }),
+
+  verificationResult: null,
+  setVerificationResult: (verificationResult) => set({ verificationResult }),
 }))

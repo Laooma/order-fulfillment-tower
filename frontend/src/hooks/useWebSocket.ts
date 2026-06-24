@@ -9,7 +9,7 @@ export interface TodoItem {
 }
 
 export interface WsMessage {
-  type: 'chat' | 'abort' | 'chunk' | 'complete' | 'stopped' | 'error' | 'skill_assigned' | 'tool_call' | 'tool_result' | 'status' | 'todo_list' | 'a2ui_surface' | 'task_boundary' | 'context_update' | 'compacting' | 'todo_suggestion'
+  type: 'chat' | 'abort' | 'chunk' | 'complete' | 'stopped' | 'error' | 'skill_assigned' | 'tool_call' | 'tool_result' | 'status' | 'todo_list' | 'a2ui_surface' | 'task_boundary' | 'context_update' | 'compacting' | 'todo_suggestion' | 'verification_result'
   sessionId?: string
   skillId?: string
   autoAssign?: boolean
@@ -68,21 +68,38 @@ export function useWebSocket(url: string) {
   const [thinking, setThinking] = useState(false)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
   const reconnectAttempts = useRef(0)
+  const mountedRef = useRef(true)
   const MAX_RECONNECT_DELAY = 30000
 
   const connect = useCallback(() => {
+    // Don't connect if component unmounted
+    if (!mountedRef.current) return
+    // Don't create a new connection if one is already open or connecting
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
+
+    // Clean up any previous socket that's in a closing/closed state
+    if (wsRef.current) {
+      wsRef.current.onclose = null
+      wsRef.current.onerror = null
+      wsRef.current.onopen = null
+      wsRef.current.onmessage = null
+    }
 
     const ws = new WebSocket(url)
     wsRef.current = ws
 
     ws.onopen = () => {
+      if (!mountedRef.current) {
+        ws.close()
+        return
+      }
       console.log('[WS] Connected')
       setConnected(true)
       reconnectAttempts.current = 0
     }
 
     ws.onmessage = (event) => {
+      if (!mountedRef.current) return
       try {
         const msg: WsMessage = JSON.parse(event.data)
         setMessages((prev) => [...prev, msg])
@@ -98,6 +115,7 @@ export function useWebSocket(url: string) {
     }
 
     ws.onclose = () => {
+      if (!mountedRef.current) return
       console.log('[WS] Disconnected, will reconnect...')
       setConnected(false)
       // Exponential backoff: 1s, 2s, 4s, 8s, ... max 30s
@@ -106,17 +124,26 @@ export function useWebSocket(url: string) {
       reconnectTimer.current = setTimeout(connect, delay)
     }
 
-    ws.onerror = (err) => {
-      console.error('[WS] Error:', err)
-      ws.close()
+    ws.onerror = () => {
+      // Don't call ws.close() here — the browser already handles cleanup.
+      // Calling close() would trigger onclose() synchronously, potentially
+      // creating a duplicate reconnect timer (one from onerror→close→onclose,
+      // another from the browser's own close→onclose sequence).
+      console.error('[WS] Error (will reconnect automatically)')
     }
   }, [url])
 
   useEffect(() => {
+    mountedRef.current = true
     connect()
     return () => {
+      mountedRef.current = false
       clearTimeout(reconnectTimer.current)
-      wsRef.current?.close()
+      if (wsRef.current) {
+        wsRef.current.onclose = null  // Prevent reconnect timer on intentional close
+        wsRef.current.close()
+        wsRef.current = null
+      }
     }
   }, [connect])
 
