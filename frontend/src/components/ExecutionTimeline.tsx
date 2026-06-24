@@ -64,7 +64,7 @@ export default function ExecutionTimeline({ steps, currentStepId, onStepClick }:
       <div className="detail-card-header">
         <span className="detail-card-title">执行步骤</span>
         <span className="text-[11px] text-muted font-mono">
-          {doneCount} / {steps.length} 已完成
+          {doneCount} / {visibleSteps.length} 已完成
         </span>
       </div>
       <div className="detail-card-body">

@@ -1,33 +1,16 @@
 import type { MetaPanelConfig } from '../types/metaConfig'
 
 /**
- * Default meta panel config for execution task detail page.
+ * Meta panel config for execution task detail page — contract info only.
  *
- * All field values are resolved dynamically from the task data object.
- * Fields with `dataKey` are looked up from the enriched task object.
- * `static` serves only as fallback when data is missing.
+ * Task metadata (ID, assignee, supervisor, priority, status, due date)
+ * is shown in the header bar and should NOT be duplicated here.
  */
 export const defaultMetaConfig: MetaPanelConfig = {
   contractIdDataKey: 'contractId',
   companyName: '',
-  statusBadges: [
-    { label: '异常', className: 'danger' },
-    { label: '紧急', className: 'warn' },
-  ],
+  statusBadges: [],
   sections: [
-    {
-      title: '任务信息',
-      rows: [
-        { label: '任务编号', value: { dataKey: 'id', mono: true, fontSize: 11 } },
-        { label: '关联分析', value: { dataKey: 'analysisTaskId', mono: true } },
-        { label: '优先级', value: { dataKey: 'priorityLabel' } },
-        { label: '状态', value: { dataKey: 'statusLabel' } },
-        { label: '截止日期', value: { dataKey: 'dueDate', mono: true } },
-        { label: '', value: {}, dividerBefore: true },
-        { label: '督办人', value: { dataKey: 'supervisor', bold: true } },
-        { label: '执行人', value: { dataKey: 'assignee', bold: true } },
-      ],
-    },
     {
       title: '基本信息',
       rows: [
@@ -43,15 +26,6 @@ export const defaultMetaConfig: MetaPanelConfig = {
       rows: [
         { label: '发货比例', value: { dataKey: 'shipment_ratio', mono: true }, progressValue: 0 },
         { label: '签收比例', value: { dataKey: 'receipt_ratio', mono: true }, progressValue: 0 },
-      ],
-    },
-    {
-      title: '产品信息',
-      rows: [
-        { label: '产品型号', value: { dataKey: 'product_model' } },
-        { label: '物料编号', value: { dataKey: 'material_code', mono: true } },
-        { label: 'SKU 数量', value: { dataKey: 'sku_count', mono: true } },
-        { label: '发货方式', value: { dataKey: 'ship_method' } },
       ],
     },
   ],
